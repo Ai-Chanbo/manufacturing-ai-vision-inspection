@@ -1,0 +1,25 @@
+# .NET build artifacts
+frontend/VisionInspectionHmi/bin/
+frontend/VisionInspectionHmi/obj/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Runtime-generated files (logs, NG saved images)
+Logs/
+Results/
+
+# Claude Code local settings
+.claude/
+
+# IDE
+.vs/
+*.user
+*.suo
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
