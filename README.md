@@ -678,7 +678,7 @@ sequenceDiagram
 | D100 | TriggerAddress | PLC → PC | 撮像トリガ (0=待機, 1=検査開始) |
 | D101 | BusyAddress | PC → PLC | 検査中フラグ (0=待機, 1=処理中) |
 | D102 | ResultAddress | PC → PLC | 判定結果 (0=未判定, 1=OK, 2=NG) |
-| D103 | ErrorCodeAddress | PC → PLC | エラーコード (0=正常, 1=通信異常, 2=推論異常) |
+| D103 | ErrorCodeAddress | PC → PLC | エラーコード (0=正常, 1=通信異常, 2=推論異常, 3=撮像異常, 4=画像保存異常) |
 | D104 | HeartbeatAddress | PC → PLC | PC 稼働監視カウンタ（毎秒インクリメント） |
 
 すべてのアドレスは設定画面 → PLC連携設定 から変更可能。
@@ -710,6 +710,70 @@ sequenceDiagram
 
 ---
 
+## PLCトリガ連動カメラ自動撮像（PoC）
+
+PLC トリガを受信した瞬間にカメラで自動撮像し、その画像を AI 推論へ渡す拡張フローです。  
+実カメラなしで動作確認できる **FakeCameraCaptureService（シミュレーター）** を同梱しています。
+
+### 撮像フロー
+
+```mermaid
+sequenceDiagram
+    participant PLC
+    participant Bridge as PlcInspectionBridge
+    participant Cam as ICameraCaptureService
+    participant ONNX as OnnxInspectionService
+    participant CSV as CsvLogService
+
+    PLC->>Bridge: D100 = 1（撮像トリガ ON）
+    Bridge->>PLC: D101 = 1（検査中 ON）
+    Bridge->>Cam: CaptureAsync(cameraIndex, saveDir)
+    alt 実カメラ
+        Cam-->>Bridge: CapturedImages/yyyyMMdd/capture_*.jpg
+    else FakeCamera
+        Cam-->>Bridge: fake_*.jpg（テスト画像を自動生成）
+    end
+    Bridge->>ONNX: InspectAsync(capturedImagePath)
+    ONNX-->>Bridge: InspectionResult (OK/NG, score)
+    Bridge->>PLC: D102 = 1 or 2（判定結果）
+    Bridge->>PLC: D103 = 0（エラーなし）
+    Bridge->>PLC: D101 = 0（検査中 OFF）
+    Bridge->>CSV: Save(history + CapturedImagePath)
+```
+
+### 設定項目（設定画面 → カメラ設定）
+
+| 項目 | 内容 |
+|------|------|
+| PLCトリガ受信時にカメラ自動撮像 | ON で撮像モード、OFF で選択画像を使用 |
+| カメラシミュレーター | ON で FakeCamera（実カメラ不要） |
+| FakeCamera 画像パス | 空欄 = タイムスタンプ入りテスト画像を自動生成 |
+
+### カメラモード別動作
+
+| 設定組み合わせ | 動作 |
+|----------------|------|
+| PLCトリガ=OFF | トリガ時に選択済み画像 or ライブプレビューフレームを使用（従来動作） |
+| PLCトリガ=ON + FakeCamera=ON + パス指定あり | 指定画像を返す（既存サンプル画像で AI 検証可能） |
+| PLCトリガ=ON + FakeCamera=ON + パス未指定 | `CapturedImages/` に 224×224 テスト画像を生成して推論 |
+| PLCトリガ=ON + FakeCamera=OFF | OpenCvSharp で実カメラを単発撮像して推論 |
+
+### 撮像PoC動作確認手順
+
+```
+1. 設定画面 → カメラ設定
+   ・「PLCトリガ受信時にカメラ自動撮像」にチェック
+   ・「カメラシミュレーター」にチェック（実カメラ不要）
+   ・FakeCamera 画像: backend/sample_images/ok_sample.jpg を指定（任意）
+2. 設定画面 → PLC連携設定 → 「シミュレーターモード」にチェック
+3. メイン画面 → [PLC接続] → [▶ 監視開始]
+4. [テスト発火] → 自動撮像 → ONNX 推論 → 結果表示
+5. CapturedImages/ フォルダに撮像ファイルが保存されていることを確認
+6. Logs/ の CSV に「撮像画像パス」列が記録されていることを確認
+```
+
+---
+
 ## 実運用評価
 
 本システムは **PoC（概念実証）〜 小規模パイロット導入レベル** に相当します。
@@ -723,7 +787,8 @@ sequenceDiagram
 | FastAPI ネットワーク推論 | ✅ 実装済 | 中央集権モデル管理 |
 | CSV ログ・NG 画像保存 | ✅ 実装済 | 検査トレーサビリティ |
 | 設定外部化 (JSON) | ✅ 実装済 | 再ビルド不要で閾値変更可能 |
-| PLC 連携 (自動トリガ) | ❌ 未実装 | **ライン自動化に必須** |
+| PLC 連携 (自動トリガ) | ✅ 実装済 (PoC) | Modbus TCP / FakePLC シミュレーター同梱 |
+| PLC連動カメラ自動撮像 | ✅ 実装済 (PoC) | OpenCv + FakeCamera シミュレーター同梱 |
 | 連続自動検査モード | ❌ 未実装 | タクトタイム合わせには必要 |
 | カスタムモデル学習 | ❌ 未実装 | 実製品への適用には再学習が必要 |
 | 照明変動対策 | ❌ 未実装 | ハードウェア側での対応が前提 |

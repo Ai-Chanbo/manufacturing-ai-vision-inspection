@@ -17,7 +17,10 @@ public class SettingsForm : Form
     private TextBox txtNgDir  = null!;
 
     // カメラ設定
-    private ComboBox cmbCameraIndex = null!;
+    private ComboBox cmbCameraIndex          = null!;
+    private CheckBox chkUseCameraOnTrigger   = null!;
+    private CheckBox chkFakeCamera           = null!;
+    private TextBox  txtFakeCameraPath       = null!;
 
     // 推論モード設定
     private RadioButton rbFastApi     = null!;
@@ -46,9 +49,9 @@ public class SettingsForm : Form
     private void InitializeComponent(AppSettings s)
     {
         Text            = "設定";
-        Size            = new Size(520, 710);
-        MinimumSize     = new Size(520, 710);
-        MaximumSize     = new Size(520, 710);
+        Size            = new Size(520, 770);
+        MinimumSize     = new Size(520, 770);
+        MaximumSize     = new Size(520, 770);
         StartPosition   = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox     = false;
@@ -128,7 +131,7 @@ public class SettingsForm : Form
                                    lblNgDir, txtNgDir, btnBrowseNg, lblSaveNote]);
 
         // ── カメラ設定 ───────────────────────────────────────────
-        var gbCamera = CreateGroupBox("カメラ設定", 12, 328, 490, 70);
+        var gbCamera = CreateGroupBox("カメラ設定", 12, 328, 490, 130);
 
         var lblCamIdx = CreateLabel("カメラ番号(0〜3):", 8, 24, 122);
         cmbCameraIndex = new ComboBox
@@ -137,14 +140,40 @@ public class SettingsForm : Form
             DropDownStyle = ComboBoxStyle.DropDownList,
         };
         cmbCameraIndex.Items.AddRange(["0", "1", "2", "3"]);
-        cmbCameraIndex.SelectedIndex = Math.Clamp(s.CameraIndex, 0, 3);
+        cmbCameraIndex.SelectedIndex = Math.Clamp(s.CameraSettings.CameraIndex, 0, 3);
 
         var lblResNote = CreateLabel("解像度はカメラ起動後に確認できます", 210, 24, 270, Color.Gray, 8);
 
-        gbCamera.Controls.AddRange([lblCamIdx, cmbCameraIndex, lblResNote]);
+        chkUseCameraOnTrigger = new CheckBox
+        {
+            Left = 8, Top = 52, Width = 470, Height = 18, Font = baseFont,
+            Text    = "PLCトリガ受信時にカメラ自動撮像（OFF = 選択画像を使用）",
+            Checked = s.CameraSettings.UseCameraOnPlcTrigger,
+        };
+
+        chkFakeCamera = new CheckBox
+        {
+            Left = 8, Top = 76, Width = 220, Height = 18, Font = baseFont,
+            Text    = "カメラシミュレーター（実カメラ不要）",
+            Checked = s.CameraSettings.UseFakeCamera,
+        };
+
+        var lblFakePath = CreateLabel("FakeCamera画像:", 8, 100, 116);
+        txtFakeCameraPath = new TextBox
+        {
+            Left            = 128, Top = 98, Width = 268, Height = 22, Font = baseFont,
+            Text            = s.CameraSettings.FakeCameraImagePath,
+            PlaceholderText = "空欄 = タイムスタンプ入りテスト画像を自動生成",
+        };
+        var btnBrowseFake = CreateSmallButton("参照...", 402, 97);
+        btnBrowseFake.Click += (_, _) => BrowseImageFile(txtFakeCameraPath);
+
+        gbCamera.Controls.AddRange([lblCamIdx, cmbCameraIndex, lblResNote,
+                                     chkUseCameraOnTrigger, chkFakeCamera,
+                                     lblFakePath, txtFakeCameraPath, btnBrowseFake]);
 
         // ── 推論モード設定 ────────────────────────────────────────
-        var gbMode = CreateGroupBox("推論モード設定", 12, 406, 490, 116);
+        var gbMode = CreateGroupBox("推論モード設定", 12, 466, 490, 116);
 
         rbFastApi = new RadioButton
         {
@@ -177,7 +206,7 @@ public class SettingsForm : Form
 
         // ── PLC設定 ──────────────────────────────────────────────
         var plc = s.PlcSettings;
-        var gbPlc = CreateGroupBox("PLC連携設定（Modbus TCP）", 12, 528, 490, 96);
+        var gbPlc = CreateGroupBox("PLC連携設定（Modbus TCP）", 12, 588, 490, 96);
 
         var lblPlcIp = CreateLabel("IPアドレス:", 8, 24, 82);
         txtPlcIp = new TextBox
@@ -214,14 +243,14 @@ public class SettingsForm : Form
         // ── 保存 / キャンセルボタン ──────────────────────────────
         var btnSave = new Button
         {
-            Left = 300, Top = 634, Width = 96, Height = 32,
+            Left = 300, Top = 694, Width = 96, Height = 32,
             Text = "保存", Font = new Font("Meiryo UI", 9, FontStyle.Bold),
             BackColor = Color.SeaGreen, ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
         };
         var btnCancel = new Button
         {
-            Left = 404, Top = 634, Width = 96, Height = 32,
+            Left = 404, Top = 694, Width = 96, Height = 32,
             Text = "キャンセル", Font = new Font("Meiryo UI", 9),
             BackColor = Color.DimGray, ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
@@ -291,7 +320,16 @@ public class SettingsForm : Form
             InferenceEnabled  = chkInferenceEnabled.Checked,
             CsvDirectory      = txtCsvDir.Text.Trim(),
             NgImageDirectory  = txtNgDir.Text.Trim(),
-            CameraIndex       = int.Parse(cmbCameraIndex.SelectedItem?.ToString() ?? "0"),
+            CameraSettings    = new CameraSettings
+            {
+                CameraIndex            = int.Parse(cmbCameraIndex.SelectedItem?.ToString() ?? "0"),
+                UseCameraOnPlcTrigger  = chkUseCameraOnTrigger.Checked,
+                SaveCapturedImage      = _originalSettings.CameraSettings.SaveCapturedImage,
+                CapturedImageDirectory = _originalSettings.CameraSettings.CapturedImageDirectory,
+                CaptureTimeoutMs       = _originalSettings.CameraSettings.CaptureTimeoutMs,
+                UseFakeCamera          = chkFakeCamera.Checked,
+                FakeCameraImagePath    = txtFakeCameraPath.Text.Trim(),
+            },
             InferenceMode     = rbOnnx.Checked ? "ONNX" : "FastAPI",
             OnnxModelPath     = txtOnnxPath.Text.Trim(),
             PlcSettings       = new PlcSettings
@@ -325,6 +363,22 @@ public class SettingsForm : Form
 
         if (dlg.ShowDialog() == DialogResult.OK)
             target.Text = dlg.SelectedPath;
+    }
+
+    private static void BrowseImageFile(TextBox target)
+    {
+        using var dlg = new OpenFileDialog
+        {
+            Title  = "FakeCamera用画像ファイルを選択",
+            Filter = "画像ファイル (*.jpg;*.jpeg;*.png;*.bmp)|*.jpg;*.jpeg;*.png;*.bmp|すべてのファイル (*.*)|*.*",
+        };
+        if (!string.IsNullOrWhiteSpace(target.Text))
+        {
+            var dir = Path.GetDirectoryName(target.Text);
+            if (dir != null && Directory.Exists(dir)) dlg.InitialDirectory = dir;
+        }
+        if (dlg.ShowDialog() == DialogResult.OK)
+            target.Text = dlg.FileName;
     }
 
     private void BrowseOnnxFile()

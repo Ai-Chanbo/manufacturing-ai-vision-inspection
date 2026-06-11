@@ -11,4 +11,5 @@ public class InspectionHistory
     public string Message { get; set; } = string.Empty;
     public string ApiStatus { get; set; } = string.Empty;
     public double InferenceMs { get; set; }
+    public string CapturedImagePath { get; set; } = string.Empty;
 }

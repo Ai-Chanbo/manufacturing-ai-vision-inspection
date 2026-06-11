@@ -17,6 +17,8 @@ public sealed class PlcInspectionBridge : IDisposable
     public const short ErrorNone          = 0;
     public const short ErrorCommunication = 1;
     public const short ErrorInference     = 2;
+    public const short ErrorCamera        = 3; // カメラ撮像失敗
+    public const short ErrorImageSave     = 4; // 画像保存失敗
 
     private readonly IPlcCommunicationService _plc;
     private readonly OnnxInspectionService    _onnx;
@@ -51,13 +53,18 @@ public sealed class PlcInspectionBridge : IDisposable
     // ──────────────────────────────────────────────────────────────
 
     /// <summary>PLC ポーリングを開始する。</summary>
-    /// <param name="getImagePath">呼び出しのたびに最新の検査対象画像パスを返す関数</param>
+    /// <param name="acquireImageAsync">
+    ///   トリガ受信時に呼び出す非同期画像取得関数。
+    ///   カメラ撮像または選択済み画像のパスを返す。null / 存在しないパスはエラー扱い。
+    /// </param>
     /// <param name="ngThreshold">OK/NG 判定スコア閾値</param>
-    public void StartPolling(Func<string?> getImagePath, double ngThreshold)
+    public void StartPolling(
+        Func<CancellationToken, Task<string?>> acquireImageAsync,
+        double ngThreshold)
     {
         if (IsPolling) return;
         _cts         = new CancellationTokenSource();
-        _pollingTask = Task.Run(() => PollingLoop(getImagePath, ngThreshold, _cts.Token));
+        _pollingTask = Task.Run(() => PollingLoop(acquireImageAsync, ngThreshold, _cts.Token));
 
         AppLogger.Info($"PLCポーリング開始 ({_settings.IpAddress}:{_settings.Port}" +
                        $" interval={_settings.PollingIntervalMs}ms)");
@@ -80,7 +87,10 @@ public sealed class PlcInspectionBridge : IDisposable
     //  ポーリングループ
     // ──────────────────────────────────────────────────────────────
 
-    private async Task PollingLoop(Func<string?> getImagePath, double ngThreshold, CancellationToken ct)
+    private async Task PollingLoop(
+        Func<CancellationToken, Task<string?>> acquireImageAsync,
+        double ngThreshold,
+        CancellationToken ct)
     {
         short prevTrigger = 0;
         int   hbTick      = 0;
@@ -114,8 +124,7 @@ public sealed class PlcInspectionBridge : IDisposable
                 if (trigger == 1 && prevTrigger == 0 && !_isInspecting)
                 {
                     _isInspecting = true;
-                    var imagePath = getImagePath();
-                    _ = RunInspectionAsync(imagePath, ngThreshold, ct);
+                    _ = RunInspectionAsync(acquireImageAsync, ngThreshold, ct);
                 }
 
                 prevTrigger = trigger.Value;
@@ -137,23 +146,43 @@ public sealed class PlcInspectionBridge : IDisposable
     //  検査実行
     // ──────────────────────────────────────────────────────────────
 
-    private async Task RunInspectionAsync(string? imagePath, double ngThreshold, CancellationToken ct)
+    private async Task RunInspectionAsync(
+        Func<CancellationToken, Task<string?>> acquireImageAsync,
+        double ngThreshold,
+        CancellationToken ct)
     {
+        string? imagePath = null;
         try
         {
-            // 検査中フラグ ON
             await _plc.WriteRegisterAsync(_settings.BusyAddress, 1);
             await _plc.WriteRegisterAsync(_settings.ResultAddress, ResultPending);
             await _plc.WriteRegisterAsync(_settings.ErrorCodeAddress, ErrorNone);
 
-            StatusChanged?.Invoke(this, "検査中");
+            // 画像取得（カメラ撮像 or 選択画像）
+            StatusChanged?.Invoke(this, "撮像中");
+            try
+            {
+                imagePath = await acquireImageAsync(ct);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("PLCトリガ: 画像取得失敗", ex);
+                await _plc.WriteRegisterAsync(_settings.ErrorCodeAddress, ErrorCamera);
+                return;
+            }
 
             if (string.IsNullOrEmpty(imagePath) || !File.Exists(imagePath))
             {
-                AppLogger.Warn("PLCトリガ: 検査対象画像が見つかりません");
-                await _plc.WriteRegisterAsync(_settings.ErrorCodeAddress, ErrorInference);
+                AppLogger.Warn("PLCトリガ: 有効な画像パスを取得できませんでした");
+                await _plc.WriteRegisterAsync(_settings.ErrorCodeAddress, ErrorCamera);
                 return;
             }
+
+            StatusChanged?.Invoke(this, "検査中");
 
             InspectionResult result;
             try

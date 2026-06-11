@@ -62,6 +62,7 @@ public class MainForm : Form
     // --- PLC 連携 ---
     private IPlcCommunicationService? _plcService;
     private PlcInspectionBridge?      _plcBridge;
+    private ICameraCaptureService?    _cameraCaptureService;
     private Button btnPlcConnect     = null!;
     private Button btnPlcDisconnect  = null!;
     private Button btnPlcMonitor     = null!;
@@ -729,7 +730,7 @@ public class MainForm : Form
 
     private void BtnCameraStart_Click(object? sender, EventArgs e)
     {
-        int cameraIndex = AppSettingsService.Current.CameraIndex;
+        int cameraIndex = AppSettingsService.Current.CameraSettings.CameraIndex;
         try
         {
             _cameraService = new CameraService();
@@ -837,10 +838,21 @@ public class MainForm : Form
             return;
         }
 
+        // カメラ撮像サービスを初期化（監視開始のたびに再作成）
+        _cameraCaptureService?.Dispose();
+        var camCfg = cfg.CameraSettings;
+        _cameraCaptureService = camCfg.UseFakeCamera
+            ? (ICameraCaptureService)new FakeCameraCaptureService(camCfg.FakeCameraImagePath)
+            : new OpenCvCameraCaptureService();
+
+        if (camCfg.UseCameraOnPlcTrigger)
+            AppLogger.Info($"PLCカメラ撮像モード: " +
+                           (camCfg.UseFakeCamera ? "FakeCamera" : $"CameraIndex={camCfg.CameraIndex}"));
+
         _plcBridge = new PlcInspectionBridge(_plcService!, _onnxService, cfg.PlcSettings);
         _plcBridge.InspectionCompleted += OnPlcInspectionCompleted;
         _plcBridge.StatusChanged       += OnPlcStatusChanged;
-        _plcBridge.StartPolling(GetCurrentInspectionImagePath, cfg.NgThreshold);
+        _plcBridge.StartPolling(AcquireInspectionImageAsync, cfg.NgThreshold);
 
         btnPlcMonitor.Text      = "■ 監視停止";
         btnPlcMonitor.BackColor = Color.Crimson;
@@ -907,18 +919,20 @@ public class MainForm : Form
         ShowResult(e.Result, e.Result.InferenceMs);
         lblPlcLastTrigger.Text = $"最終トリガ: {e.InspectedAt:HH:mm:ss}";
 
+        var camCfg = AppSettingsService.Current.CameraSettings;
         var history = new InspectionHistory
         {
-            InspectedAt   = e.InspectedAt,
-            ImageFileName = Path.GetFileName(e.ImagePath),
-            ImagePath     = e.ImagePath,
-            Result        = e.Result.Result,
-            Score         = e.Result.Score,
-            DefectType    = !string.IsNullOrEmpty(e.Result.ClassName)
-                            ? e.Result.ClassName : e.Result.DefectType,
-            Message       = e.Result.Message,
-            ApiStatus     = "PLC",
-            InferenceMs   = e.Result.InferenceMs,
+            InspectedAt       = e.InspectedAt,
+            ImageFileName     = Path.GetFileName(e.ImagePath),
+            ImagePath         = e.ImagePath,
+            CapturedImagePath = camCfg.UseCameraOnPlcTrigger ? e.ImagePath : "",
+            Result            = e.Result.Result,
+            Score             = e.Result.Score,
+            DefectType        = !string.IsNullOrEmpty(e.Result.ClassName)
+                                ? e.Result.ClassName : e.Result.DefectType,
+            Message           = e.Result.Message,
+            ApiStatus         = "PLC",
+            InferenceMs       = e.Result.InferenceMs,
         };
 
         AddHistory(history);
@@ -951,8 +965,42 @@ public class MainForm : Form
         ssPlc.ForeColor        = color ?? Color.FromArgb(40, 40, 80);
     }
 
-    private string? GetCurrentInspectionImagePath()
+    private async Task<string?> AcquireInspectionImageAsync(CancellationToken ct)
     {
+        var camCfg = AppSettingsService.Current.CameraSettings;
+
+        if (camCfg.UseCameraOnPlcTrigger && _cameraCaptureService != null)
+        {
+            // カメラ撮像モード
+            var saveDir = string.IsNullOrWhiteSpace(camCfg.CapturedImageDirectory)
+                ? Path.Combine(AppContext.BaseDirectory, "CapturedImages", DateTime.Now.ToString("yyyyMMdd"))
+                : Path.Combine(camCfg.CapturedImageDirectory, DateTime.Now.ToString("yyyyMMdd"));
+
+            try
+            {
+                var path = await _cameraCaptureService.CaptureAsync(
+                    camCfg.CameraIndex, saveDir, camCfg.CaptureTimeoutMs, ct);
+
+                AppLogger.Info($"PLCトリガ撮像: {Path.GetFileName(path)}");
+
+                if (IsHandleCreated && !IsDisposed)
+                    try { Invoke(() => lblPlcLastTrigger.Text = $"最終撮像: {DateTime.Now:HH:mm:ss}"); }
+                    catch { }
+
+                return path;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("PLCトリガ撮像失敗", ex);
+                return null;
+            }
+        }
+
+        // フォールバック: ライブプレビューフレームまたは選択画像
         if (_cameraService?.IsRunning == true && _lastCameraFrame != null)
         {
             try
@@ -960,15 +1008,22 @@ public class MainForm : Form
                 var tempDir  = Path.Combine(Path.GetTempPath(), "VisionInspectionHmi");
                 Directory.CreateDirectory(tempDir);
                 var tempPath = Path.Combine(tempDir, $"plc_{DateTime.Now:yyyyMMdd_HHmmss}.jpg");
-                _lastCameraFrame.Save(tempPath, System.Drawing.Imaging.ImageFormat.Jpeg);
-                return tempPath;
+
+                Bitmap? snapshot = null;
+                if (IsHandleCreated && !IsDisposed)
+                    try { Invoke(() => { if (_lastCameraFrame != null) snapshot = new Bitmap(_lastCameraFrame); }); }
+                    catch { }
+
+                snapshot?.Save(tempPath, System.Drawing.Imaging.ImageFormat.Jpeg);
+                snapshot?.Dispose();
+                return File.Exists(tempPath) ? tempPath : _selectedImagePath;
             }
             catch (Exception ex)
             {
-                AppLogger.Error("PLC用カメラフレーム保存失敗", ex);
-                return null;
+                AppLogger.Error("PLC用ライブフレーム保存失敗", ex);
             }
         }
+
         return _selectedImagePath;
     }
 
@@ -986,6 +1041,8 @@ public class MainForm : Form
     {
         _plcBridge?.Dispose();
         _plcBridge = null;
+        _cameraCaptureService?.Dispose();
+        _cameraCaptureService = null;
         _plcService?.Dispose();
         _plcService = null;
     }
@@ -1104,6 +1161,7 @@ public class MainForm : Form
         StopCamera();
         // PLC ブリッジは同期的に停止（フォームクローズのため簡易処理）
         _plcBridge?.Dispose();
+        _cameraCaptureService?.Dispose();
         _plcService?.Dispose();
         base.OnFormClosed(e);
         _apiClient.Dispose();

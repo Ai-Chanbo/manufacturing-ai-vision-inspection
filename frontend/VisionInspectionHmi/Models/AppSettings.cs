@@ -15,7 +15,7 @@ public class AppSettings
     public string NgImageDirectory { get; set; } = "";
 
     // カメラ設定
-    public int CameraIndex { get; set; } = 0;
+    public CameraSettings CameraSettings { get; set; } = new();
 
     // 推論モード設定
     public string InferenceMode  { get; set; } = "FastAPI"; // "FastAPI" | "ONNX"

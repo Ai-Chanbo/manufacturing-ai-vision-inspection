@@ -19,7 +19,7 @@ public static class CsvLogService
 
     private static readonly string[] Header =
     [
-        "検査日時", "画像ファイル名", "画像パス", "判定結果",
+        "検査日時", "画像ファイル名", "画像パス", "撮像画像パス", "判定結果",
         "スコア", "異常種別", "メッセージ", "API通信結果", "推論時間(ms)"
     ];
 
@@ -40,6 +40,7 @@ public static class CsvLogService
             record.InspectedAt.ToString("yyyy-MM-dd HH:mm:ss"),
             record.ImageFileName,
             record.ImagePath,
+            record.CapturedImagePath,
             record.Result,
             record.Score.ToString("F4"),
             record.DefectType,
