@@ -646,6 +646,70 @@ tensor[B] = (b / 255f - 0.406f) / 0.225f;
 
 ---
 
+## PLC 連携（Modbus TCP）
+
+### 概要
+
+`PlcInspectionBridge` が PLC の撮像トリガを監視し、トリガ検出時に自動で AI 推論を実行して結果を PLC へ返却します。  
+実 PLC なしで検証できる **FakePlcCommunicationService（シミュレーター）** を同梱しています。
+
+### 通信フロー
+
+```mermaid
+sequenceDiagram
+    participant PLC
+    participant Bridge as PlcInspectionBridge<br/>(C#)
+    participant ONNX as OnnxInspectionService
+
+    PLC->>Bridge: D100 = 1（撮像トリガ ON）
+    Bridge->>PLC: D101 = 1（検査中フラグ ON）
+    Bridge->>ONNX: InspectAsync(imagePath)
+    ONNX-->>Bridge: InspectionResult (OK/NG, score)
+    Bridge->>PLC: D102 = 1 or 2（判定結果）
+    Bridge->>PLC: D103 = 0（エラーなし）
+    Bridge->>PLC: D101 = 0（検査中フラグ OFF）
+    Note over Bridge,PLC: トリガが 0 に戻るまで待機（連続トリガ防止）
+```
+
+### レジスタマップ（Modbus 保持レジスタ, FC3/FC6）
+
+| アドレス | シンボル | 方向 | 内容 |
+|----------|----------|------|------|
+| D100 | TriggerAddress | PLC → PC | 撮像トリガ (0=待機, 1=検査開始) |
+| D101 | BusyAddress | PC → PLC | 検査中フラグ (0=待機, 1=処理中) |
+| D102 | ResultAddress | PC → PLC | 判定結果 (0=未判定, 1=OK, 2=NG) |
+| D103 | ErrorCodeAddress | PC → PLC | エラーコード (0=正常, 1=通信異常, 2=推論異常) |
+| D104 | HeartbeatAddress | PC → PLC | PC 稼働監視カウンタ（毎秒インクリメント） |
+
+すべてのアドレスは設定画面 → PLC連携設定 から変更可能。
+
+### シミュレーターでの動作確認手順
+
+```
+1. 設定画面 → PLC連携設定 → 「シミュレーターモード」にチェック
+2. メイン画面 → [PLC接続] ボタン押下
+   ステータス: "接続中 ✓ (シミュレーター)" に変化
+3. ONNX モードでモデルを読み込む（設定画面 → ONNXモード）
+4. 検査対象画像を選択するか、カメラを起動
+5. [▶ 監視開始] ボタン押下 → ポーリングループ開始
+6. [テスト発火] ボタン押下 → D100=1 を仮想的に書き込み
+   → 自動で推論実行 → 結果が UI に表示される
+7. [■ 監視停止] → [PLC切断] で終了
+```
+
+### 実 PLC 接続時の注意点
+
+```
+・設定画面で「シミュレーターモード」のチェックを外す
+・PLCの IP アドレスとポート（デフォルト 502）を設定する
+・PLC 側で Modbus TCP サーバーを有効にし、FC3/FC6 を許可する
+・ファイアウォールで TCP/502 を開放する
+・レジスタアドレスは PLC プログラムの D レジスタ番号と一致させること
+・PLC ラダー側: D100 を検査トリガとして記述し、D101/D102 を監視する
+```
+
+---
+
 ## 実運用評価
 
 本システムは **PoC（概念実証）〜 小規模パイロット導入レベル** に相当します。

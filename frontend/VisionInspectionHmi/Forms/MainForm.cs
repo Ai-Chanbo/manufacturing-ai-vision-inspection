@@ -59,12 +59,27 @@ public class MainForm : Form
     private int _okCount;
     private int _ngCount;
 
+    // --- PLC 連携 ---
+    private IPlcCommunicationService? _plcService;
+    private PlcInspectionBridge?      _plcBridge;
+    private Button btnPlcConnect     = null!;
+    private Button btnPlcDisconnect  = null!;
+    private Button btnPlcMonitor     = null!;
+    private Button btnPlcTestFire    = null!;
+    private Label  lblPlcStatus      = null!;
+    private Label  lblPlcLastTrigger = null!;
+    private ToolStripStatusLabel ssPlc = null!;
+
     public MainForm()
     {
         AppLogger.Start();
         AppSettingsService.Load();
         InitializeComponent();
         ApplySettings(AppSettingsService.Current);
+        // PLC ボタン初期状態（未接続時）
+        btnPlcDisconnect.Enabled = false;
+        btnPlcMonitor.Enabled    = false;
+        btnPlcTestFire.Enabled   = false;
         Shown += MainForm_Shown;
     }
 
@@ -88,8 +103,8 @@ public class MainForm : Form
     {
         AutoScaleMode  = AutoScaleMode.None;
         Text           = "製造業向け 外観検査画像解析システム";
-        Size           = new Size(1100, 830);
-        MinimumSize    = new Size(1100, 820);
+        Size           = new Size(1100, 865);
+        MinimumSize    = new Size(1100, 855);
         StartPosition  = FormStartPosition.CenterScreen;
         BackColor      = Color.FromArgb(240, 240, 245);
 
@@ -177,10 +192,50 @@ public class MainForm : Form
         resultGroup.Controls.AddRange(
             [_resultBanner, lblScore, lblDefect, lblInferenceMs]);
 
+        // ── PLC連携パネル ────────────────────────────────────────
+        var plcGroup = new GroupBox
+        {
+            Text    = "PLC連携（Modbus TCP）",
+            Left = 8, Top = 737, Width = 422, Height = 80,
+            Font    = new Font("Meiryo UI", 9),
+            Padding = new Padding(6, 20, 6, 6),
+        };
+
+        btnPlcConnect    = CreateButton("PLC接続",   8,   24, Color.SteelBlue);
+        btnPlcDisconnect = CreateButton("PLC切断",   110, 24, Color.DimGray);
+        btnPlcMonitor    = CreateButton("▶ 監視開始", 212, 24, Color.SeaGreen);
+        btnPlcTestFire   = CreateButton("テスト発火", 336, 24, Color.DarkOrange);
+        foreach (var b in new[] { btnPlcConnect, btnPlcDisconnect, btnPlcMonitor, btnPlcTestFire })
+        {
+            b.Width  = 98;
+            b.Height = 28;
+            b.Font   = new Font("Meiryo UI", 8, FontStyle.Bold);
+        }
+
+        lblPlcStatus = new Label
+        {
+            Text      = "状態: 未接続",
+            Left = 8, Top = 56, Width = 200, Height = 18,
+            Font      = new Font("Meiryo UI", 8),
+            ForeColor = Color.Gray,
+        };
+        lblPlcLastTrigger = new Label
+        {
+            Text      = "最終トリガ: --",
+            Left = 214, Top = 56, Width = 200, Height = 18,
+            Font      = new Font("Meiryo UI", 8),
+            ForeColor = Color.DimGray,
+        };
+
+        plcGroup.Controls.AddRange([
+            btnPlcConnect, btnPlcDisconnect, btnPlcMonitor, btnPlcTestFire,
+            lblPlcStatus, lblPlcLastTrigger,
+        ]);
+
         leftPanel.Controls.AddRange([picImage, lblImagePath,
             btnSelectImage, btnInspect, btnCameraStart, btnCameraStop,
             btnCheckApi, btnExportCsv, btnSettings,
-            lblApiStatus, resultGroup]);
+            lblApiStatus, resultGroup, plcGroup]);
 
         // ══════════════════════════════════════════════════════════
         //  右パネル（履歴・統計・モデル情報）
@@ -342,21 +397,31 @@ public class MainForm : Form
             BorderSides = ToolStripStatusLabelBorderSides.Right,
             BorderStyle = Border3DStyle.Etched,
         };
-        ssModel = new ToolStripStatusLabel { Text = "MODEL: ---" };
-        _statusStrip.Items.AddRange([ssApi, ssCamera, ssModel]);
+        ssModel = new ToolStripStatusLabel
+        {
+            Text        = "MODEL: ---",
+            BorderSides = ToolStripStatusLabelBorderSides.Right,
+            BorderStyle = Border3DStyle.Etched,
+        };
+        ssPlc = new ToolStripStatusLabel { Text = "PLC: 未接続" };
+        _statusStrip.Items.AddRange([ssApi, ssCamera, ssModel, ssPlc]);
 
         Controls.Add(rightPanel);
         Controls.Add(leftPanel);
         Controls.Add(_statusStrip);
 
         // --- イベント登録 ---
-        btnSelectImage.Click += BtnSelectImage_Click;
-        btnInspect.Click     += BtnInspect_Click;
-        btnCameraStart.Click += BtnCameraStart_Click;
-        btnCameraStop.Click  += BtnCameraStop_Click;
-        btnCheckApi.Click    += BtnCheckApi_Click;
-        btnExportCsv.Click   += BtnExportCsv_Click;
-        btnSettings.Click    += BtnSettings_Click;
+        btnSelectImage.Click  += BtnSelectImage_Click;
+        btnInspect.Click      += BtnInspect_Click;
+        btnCameraStart.Click  += BtnCameraStart_Click;
+        btnCameraStop.Click   += BtnCameraStop_Click;
+        btnCheckApi.Click     += BtnCheckApi_Click;
+        btnExportCsv.Click    += BtnExportCsv_Click;
+        btnSettings.Click     += BtnSettings_Click;
+        btnPlcConnect.Click   += BtnPlcConnect_Click;
+        btnPlcDisconnect.Click += BtnPlcDisconnect_Click;
+        btnPlcMonitor.Click   += BtnPlcMonitor_Click;
+        btnPlcTestFire.Click  += BtnPlcTestFire_Click;
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -616,6 +681,21 @@ public class MainForm : Form
 
         CsvLogService.LogsDir           = s.CsvDirectory;
         NgImageSaverService.NgDirectory = s.NgImageDirectory;
+
+        // 設定変更時に PLC リソースをリセット（再接続を促す）
+        if (_plcService != null)
+        {
+            DisposePlcResources();
+            if (lblPlcStatus != null)
+                SetPlcStatusDisplay("設定変更 — 再接続が必要", Color.DarkOrange);
+            if (btnPlcDisconnect != null) btnPlcDisconnect.Enabled = false;
+            if (btnPlcMonitor    != null)
+            {
+                btnPlcMonitor.Enabled    = false;
+                btnPlcMonitor.Text       = "▶ 監視開始";
+                btnPlcMonitor.BackColor  = Color.SeaGreen;
+            }
+        }
     }
 
     private void UpdateModelInfo(AppSettings s)
@@ -677,6 +757,110 @@ public class MainForm : Form
 
     private void BtnCameraStop_Click(object? sender, EventArgs e) => StopCamera();
 
+    // ══════════════════════════════════════════════════════════════
+    //  PLC 連携ボタンイベント
+    // ══════════════════════════════════════════════════════════════
+
+    private async void BtnPlcConnect_Click(object? sender, EventArgs e)
+    {
+        btnPlcConnect.Enabled = false;
+        SetPlcStatusDisplay("接続中...", Color.DarkOrange);
+
+        var cfg = AppSettingsService.Current;
+        var plcCfg = cfg.PlcSettings;
+
+        DisposePlcResources();
+
+        _plcService = plcCfg.UseFakeService
+            ? (IPlcCommunicationService)new FakePlcCommunicationService()
+            : new ModbusTcpPlcCommunicationService(plcCfg);
+
+        bool ok = await _plcService.ConnectAsync();
+
+        if (ok)
+        {
+            SetPlcStatusDisplay(
+                plcCfg.UseFakeService ? "接続中 ✓ (シミュレーター)" : "接続中 ✓",
+                Color.SeaGreen);
+            btnPlcDisconnect.Enabled = true;
+            btnPlcMonitor.Enabled    = true;
+            btnPlcTestFire.Enabled   = plcCfg.UseFakeService;
+        }
+        else
+        {
+            SetPlcStatusDisplay("接続失敗 ✗", Color.Crimson);
+            DisposePlcResources();
+            ShowError($"PLCへの接続に失敗しました。\nIP: {plcCfg.IpAddress}:{plcCfg.Port}\n" +
+                      "IPアドレス・ポート番号を確認するか、シミュレーターモードを使用してください。");
+        }
+
+        btnPlcConnect.Enabled = true;
+    }
+
+    private async void BtnPlcDisconnect_Click(object? sender, EventArgs e)
+    {
+        await StopPlcMonitorAsync();
+        DisposePlcResources();
+        SetPlcStatusDisplay("未接続", Color.Gray);
+        btnPlcDisconnect.Enabled = false;
+        btnPlcMonitor.Enabled    = false;
+        btnPlcTestFire.Enabled   = false;
+        btnPlcMonitor.Text       = "▶ 監視開始";
+        btnPlcMonitor.BackColor  = Color.SeaGreen;
+    }
+
+    private async void BtnPlcMonitor_Click(object? sender, EventArgs e)
+    {
+        if (_plcService?.IsConnected != true)
+        {
+            ShowError("PLC が接続されていません。先に「PLC接続」を実行してください。");
+            return;
+        }
+
+        if (_plcBridge?.IsPolling == true)
+        {
+            // 監視停止
+            btnPlcMonitor.Enabled = false;
+            await StopPlcMonitorAsync();
+            btnPlcMonitor.Text      = "▶ 監視開始";
+            btnPlcMonitor.BackColor = Color.SeaGreen;
+            btnPlcMonitor.Enabled   = true;
+            return;
+        }
+
+        // 推論モードチェック
+        var cfg = AppSettingsService.Current;
+        if (cfg.InferenceMode != "ONNX" || !_onnxService.IsLoaded)
+        {
+            ShowError("PLC 連携には ONNX モードのモデル読込が必要です。\n" +
+                      "設定画面で「ONNXモード」を選択し、モデルファイルを指定してください。");
+            return;
+        }
+
+        _plcBridge = new PlcInspectionBridge(_plcService!, _onnxService, cfg.PlcSettings);
+        _plcBridge.InspectionCompleted += OnPlcInspectionCompleted;
+        _plcBridge.StatusChanged       += OnPlcStatusChanged;
+        _plcBridge.StartPolling(GetCurrentInspectionImagePath, cfg.NgThreshold);
+
+        btnPlcMonitor.Text      = "■ 監視停止";
+        btnPlcMonitor.BackColor = Color.Crimson;
+    }
+
+    private void BtnPlcTestFire_Click(object? sender, EventArgs e)
+    {
+        if (_plcService is FakePlcCommunicationService fake)
+        {
+            var plcCfg = AppSettingsService.Current.PlcSettings;
+            fake.SetTriggerAddress(plcCfg.TriggerAddress);
+            fake.FireManualTrigger();
+            AppLogger.Info("手動テストトリガ発火");
+        }
+        else
+        {
+            ShowError("テスト発火はシミュレーターモード専用です。");
+        }
+    }
+
     private void StopCamera()
     {
         if (_cameraService == null) return;
@@ -706,6 +890,104 @@ public class MainForm : Form
             ssCamera.Text      = "CAMERA: 停止";
             ssCamera.ForeColor = Color.Gray;
         }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  PLC ヘルパー
+    // ══════════════════════════════════════════════════════════════
+
+    private void OnPlcInspectionCompleted(object? sender, PlcInspectionEventArgs e)
+    {
+        if (IsDisposed) return;
+        try { Invoke(() => ProcessPlcResult(e)); } catch { }
+    }
+
+    private void ProcessPlcResult(PlcInspectionEventArgs e)
+    {
+        ShowResult(e.Result, e.Result.InferenceMs);
+        lblPlcLastTrigger.Text = $"最終トリガ: {e.InspectedAt:HH:mm:ss}";
+
+        var history = new InspectionHistory
+        {
+            InspectedAt   = e.InspectedAt,
+            ImageFileName = Path.GetFileName(e.ImagePath),
+            ImagePath     = e.ImagePath,
+            Result        = e.Result.Result,
+            Score         = e.Result.Score,
+            DefectType    = !string.IsNullOrEmpty(e.Result.ClassName)
+                            ? e.Result.ClassName : e.Result.DefectType,
+            Message       = e.Result.Message,
+            ApiStatus     = "PLC",
+            InferenceMs   = e.Result.InferenceMs,
+        };
+
+        AddHistory(history);
+        _totalCount++;
+        if      (history.Result == "OK") _okCount++;
+        else if (history.Result == "NG") _ngCount++;
+        UpdateStats();
+
+        AppLogger.LogInspection(history.ImageFileName, history.Result, history.Score,
+                                history.DefectType, history.InferenceMs, "PLC+ONNX");
+
+        if (history.Result == "NG")
+            try { NgImageSaverService.Save(e.ImagePath, history.InspectedAt); } catch { }
+
+        try { CsvLogService.Save(history); }
+        catch (Exception ex) { ShowError($"CSV保存に失敗しました: {ex.Message}"); }
+    }
+
+    private void OnPlcStatusChanged(object? sender, string status)
+    {
+        if (IsDisposed) return;
+        try { Invoke(() => SetPlcStatusDisplay(status, null)); } catch { }
+    }
+
+    private void SetPlcStatusDisplay(string status, Color? color)
+    {
+        lblPlcStatus.Text      = $"状態: {status}";
+        lblPlcStatus.ForeColor = color ?? Color.FromArgb(40, 40, 80);
+        ssPlc.Text             = $"PLC: {status}";
+        ssPlc.ForeColor        = color ?? Color.FromArgb(40, 40, 80);
+    }
+
+    private string? GetCurrentInspectionImagePath()
+    {
+        if (_cameraService?.IsRunning == true && _lastCameraFrame != null)
+        {
+            try
+            {
+                var tempDir  = Path.Combine(Path.GetTempPath(), "VisionInspectionHmi");
+                Directory.CreateDirectory(tempDir);
+                var tempPath = Path.Combine(tempDir, $"plc_{DateTime.Now:yyyyMMdd_HHmmss}.jpg");
+                _lastCameraFrame.Save(tempPath, System.Drawing.Imaging.ImageFormat.Jpeg);
+                return tempPath;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("PLC用カメラフレーム保存失敗", ex);
+                return null;
+            }
+        }
+        return _selectedImagePath;
+    }
+
+    private async Task StopPlcMonitorAsync()
+    {
+        if (_plcBridge == null) return;
+        _plcBridge.InspectionCompleted -= OnPlcInspectionCompleted;
+        _plcBridge.StatusChanged       -= OnPlcStatusChanged;
+        await _plcBridge.StopPollingAsync();
+        _plcBridge.Dispose();
+        _plcBridge = null;
+    }
+
+    private void DisposePlcResources()
+    {
+        _plcBridge?.Dispose();
+        _plcBridge = null;
+        _plcService?.Dispose();
+        _plcService = null;
     }
 
     private void OnCameraFrameReady(object? sender, Bitmap bmp)
@@ -820,6 +1102,9 @@ public class MainForm : Form
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         StopCamera();
+        // PLC ブリッジは同期的に停止（フォームクローズのため簡易処理）
+        _plcBridge?.Dispose();
+        _plcService?.Dispose();
         base.OnFormClosed(e);
         _apiClient.Dispose();
         _onnxService.Dispose();

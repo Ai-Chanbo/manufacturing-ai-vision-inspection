@@ -20,26 +20,35 @@ public class SettingsForm : Form
     private ComboBox cmbCameraIndex = null!;
 
     // 推論モード設定
-    private RadioButton rbFastApi   = null!;
-    private RadioButton rbOnnx      = null!;
-    private TextBox     txtOnnxPath = null!;
-    private Label       lblOnnxPath = null!;
+    private RadioButton rbFastApi     = null!;
+    private RadioButton rbOnnx        = null!;
+    private TextBox     txtOnnxPath   = null!;
+    private Label       lblOnnxPath   = null!;
     private Button      btnBrowseOnnx = null!;
+
+    // PLC設定
+    private TextBox       txtPlcIp       = null!;
+    private NumericUpDown nudPlcPort     = null!;
+    private NumericUpDown nudPlcInterval = null!;
+    private CheckBox      chkPlcFake    = null!;
 
     // 結果
     public AppSettings? ResultSettings { get; private set; }
 
+    private readonly AppSettings _originalSettings;
+
     public SettingsForm(AppSettings current)
     {
+        _originalSettings = current;
         InitializeComponent(current);
     }
 
     private void InitializeComponent(AppSettings s)
     {
         Text            = "設定";
-        Size            = new Size(520, 630);
-        MinimumSize     = new Size(520, 630);
-        MaximumSize     = new Size(520, 630);
+        Size            = new Size(520, 710);
+        MinimumSize     = new Size(520, 710);
+        MaximumSize     = new Size(520, 710);
         StartPosition   = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox     = false;
@@ -166,17 +175,53 @@ public class SettingsForm : Form
 
         UpdateOnnxControls();
 
+        // ── PLC設定 ──────────────────────────────────────────────
+        var plc = s.PlcSettings;
+        var gbPlc = CreateGroupBox("PLC連携設定（Modbus TCP）", 12, 528, 490, 96);
+
+        var lblPlcIp = CreateLabel("IPアドレス:", 8, 24, 82);
+        txtPlcIp = new TextBox
+        {
+            Left = 94, Top = 22, Width = 150, Height = 22, Font = baseFont,
+            Text = plc.IpAddress,
+        };
+
+        var lblPlcPort = CreateLabel("ポート:", 256, 24, 46);
+        nudPlcPort = new NumericUpDown
+        {
+            Left = 306, Top = 22, Width = 70, Height = 22, Font = baseFont,
+            Minimum = 1, Maximum = 65535, Value = Math.Clamp(plc.Port, 1, 65535),
+        };
+
+        var lblPlcInterval = CreateLabel("ポーリング(ms):", 8, 52, 106);
+        nudPlcInterval = new NumericUpDown
+        {
+            Left = 118, Top = 50, Width = 70, Height = 22, Font = baseFont,
+            Minimum = 50, Maximum = 5000, Increment = 50,
+            Value = Math.Clamp(plc.PollingIntervalMs, 50, 5000),
+        };
+
+        chkPlcFake = new CheckBox
+        {
+            Left = 8, Top = 74, Width = 470, Height = 18, Font = baseFont,
+            Text    = "シミュレーターモード（実 PLC 不要 — FakePlcCommunicationService を使用）",
+            Checked = plc.UseFakeService,
+        };
+
+        gbPlc.Controls.AddRange([lblPlcIp, txtPlcIp, lblPlcPort, nudPlcPort,
+                                  lblPlcInterval, nudPlcInterval, chkPlcFake]);
+
         // ── 保存 / キャンセルボタン ──────────────────────────────
         var btnSave = new Button
         {
-            Left = 300, Top = 534, Width = 96, Height = 32,
+            Left = 300, Top = 634, Width = 96, Height = 32,
             Text = "保存", Font = new Font("Meiryo UI", 9, FontStyle.Bold),
             BackColor = Color.SeaGreen, ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
         };
         var btnCancel = new Button
         {
-            Left = 404, Top = 534, Width = 96, Height = 32,
+            Left = 404, Top = 634, Width = 96, Height = 32,
             Text = "キャンセル", Font = new Font("Meiryo UI", 9),
             BackColor = Color.DimGray, ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
@@ -185,7 +230,7 @@ public class SettingsForm : Form
         btnSave.Click   += BtnSave_Click;
         btnCancel.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
 
-        Controls.AddRange([gbApi, gbInspect, gbSave, gbCamera, gbMode, btnSave, btnCancel]);
+        Controls.AddRange([gbApi, gbInspect, gbSave, gbCamera, gbMode, gbPlc, btnSave, btnCancel]);
     }
 
     private void UpdateOnnxControls()
@@ -249,6 +294,19 @@ public class SettingsForm : Form
             CameraIndex       = int.Parse(cmbCameraIndex.SelectedItem?.ToString() ?? "0"),
             InferenceMode     = rbOnnx.Checked ? "ONNX" : "FastAPI",
             OnnxModelPath     = txtOnnxPath.Text.Trim(),
+            PlcSettings       = new PlcSettings
+            {
+                IpAddress         = txtPlcIp.Text.Trim(),
+                Port              = (int)nudPlcPort.Value,
+                PollingIntervalMs = (int)nudPlcInterval.Value,
+                UseFakeService    = chkPlcFake.Checked,
+                // レジスタアドレスは UI 非公開のため現在の設定値を引き継ぐ
+                TriggerAddress    = _originalSettings.PlcSettings.TriggerAddress,
+                BusyAddress       = _originalSettings.PlcSettings.BusyAddress,
+                ResultAddress     = _originalSettings.PlcSettings.ResultAddress,
+                ErrorCodeAddress  = _originalSettings.PlcSettings.ErrorCodeAddress,
+                HeartbeatAddress  = _originalSettings.PlcSettings.HeartbeatAddress,
+            },
         };
 
         DialogResult = DialogResult.OK;

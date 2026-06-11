@@ -20,4 +20,7 @@ public class AppSettings
     // 推論モード設定
     public string InferenceMode  { get; set; } = "FastAPI"; // "FastAPI" | "ONNX"
     public string OnnxModelPath  { get; set; } = "";
+
+    // PLC 連携設定
+    public PlcSettings PlcSettings { get; set; } = new();
 }
