@@ -3,13 +3,21 @@ frontend/VisionInspectionHmi/bin/
 frontend/VisionInspectionHmi/obj/
 
 # Python cache
-__pycache__/
+**/__pycache__/
 *.pyc
 *.pyo
+
+# ONNX model files (large binaries — store in shared drive or model registry)
+*.onnx
+*.onnx.data
 
 # Runtime-generated files (logs, NG saved images)
 Logs/
 Results/
+
+# Environment / secrets
+.env
+.env.local
 
 # Claude Code local settings
 .claude/

@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
-from pathlib import Path
-from app.config import INPUT_SIZE, PREPROCESSED_DIR
+from app.config import INPUT_SIZE, ENABLE_DENOISING
 
 
 def load_image(image_bytes: bytes) -> np.ndarray:
@@ -14,20 +13,19 @@ def load_image(image_bytes: bytes) -> np.ndarray:
 
 def preprocess(img: np.ndarray) -> np.ndarray:
     resized = cv2.resize(img, INPUT_SIZE)
-    denoised = cv2.fastNlMeansDenoisingColored(resized, h=10, hColor=10, templateWindowSize=7, searchWindowSize=21)
-    return denoised
+    if ENABLE_DENOISING:
+        # fastNlMeansDenoisingColored は推論時間を大幅に増加させる（+100〜500ms）。
+        # 本番運用では照明・カメラ側でノイズ対策を行い、通常は無効のままにする。
+        resized = cv2.fastNlMeansDenoisingColored(
+            resized, h=10, hColor=10, templateWindowSize=7, searchWindowSize=21
+        )
+    return resized
 
 
 def to_tensor(img: np.ndarray) -> np.ndarray:
-    """HWC BGR → CHW RGB float32 normalized to [0,1]."""
+    """HWC BGR → NCHW RGB float32、[0, 1] 正規化"""
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     tensor = rgb.astype(np.float32) / 255.0
-    tensor = np.transpose(tensor, (2, 0, 1))          # CHW
-    tensor = np.expand_dims(tensor, axis=0)            # NCHW
+    tensor = np.transpose(tensor, (2, 0, 1))   # HWC → CHW
+    tensor = np.expand_dims(tensor, axis=0)     # CHW → NCHW
     return tensor
-
-
-def save_preprocessed(img: np.ndarray, filename: str) -> None:
-    out_dir = Path(PREPROCESSED_DIR)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(out_dir / filename), img)

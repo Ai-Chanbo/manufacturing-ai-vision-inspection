@@ -35,16 +35,16 @@ public class MainForm : Form
     private Label lblStatNg    = null!;
     private Label lblStatRate  = null!;
 
-    // Feature 1: モデル情報
+    // モデル情報パネル
     private Label lblModelMode   = null!;
     private Label lblModelStatus = null!;
     private Label lblModelName   = null!;
     private Label lblModelInput  = null!;
 
-    // Top5推論候補表示
+    // Top5推論候補
     private DataGridView _dgvTop5 = null!;
 
-    // Feature 3: StatusStrip
+    // ステータスバー
     private StatusStrip          _statusStrip = null!;
     private ToolStripStatusLabel ssApi        = null!;
     private ToolStripStatusLabel ssCamera     = null!;
@@ -61,7 +61,7 @@ public class MainForm : Form
 
     public MainForm()
     {
-        AppLogger.Start();  // Feature 4
+        AppLogger.Start();
         AppSettingsService.Load();
         InitializeComponent();
         ApplySettings(AppSettingsService.Current);
@@ -245,7 +245,7 @@ public class MainForm : Form
         lblStatRate  = new Label { Text = "OK率: ---", AutoSize = true, Font = statFont, ForeColor = Color.FromArgb(50, 50, 70), Margin = statMargin };
         statsPanel.Controls.AddRange([lblStatTotal, lblStatOk, lblStatNg, lblStatRate]);
 
-        // Feature 1: モデル情報パネル ──────────────────────────────
+        // モデル情報パネル ────────────────────────────────────────
         var modelInfoPanel = new Panel
         {
             Dock      = DockStyle.Top,
@@ -321,15 +321,14 @@ public class MainForm : Form
         top5Panel.Controls.Add(top5TitleLbl);
 
         // Controls.Add 順序: Fill → 後から追加したTop系が上になる (最後追加=最上部)
+        // Controls.Add 順序: Fill → 後から追加したTop系が上になる（最後追加=最上部）
         rightPanel.Controls.Add(dgvHistory);
-        rightPanel.Controls.Add(top5Panel);        // Top5 (modelInfoPanelの下)
-        rightPanel.Controls.Add(modelInfoPanel);   // Feature 1
+        rightPanel.Controls.Add(top5Panel);
+        rightPanel.Controls.Add(modelInfoPanel);
         rightPanel.Controls.Add(statsPanel);
-        rightPanel.Controls.Add(histLabel);        // 最上部
+        rightPanel.Controls.Add(histLabel);
 
-        // ══════════════════════════════════════════════════════════
-        //  Feature 3: StatusStrip（フォーム下部）
-        // ══════════════════════════════════════════════════════════
+        // ステータスバー（フォーム下部）
         _statusStrip = new StatusStrip { SizingGrip = false };
         ssApi = new ToolStripStatusLabel
         {
@@ -348,7 +347,7 @@ public class MainForm : Form
 
         Controls.Add(rightPanel);
         Controls.Add(leftPanel);
-        Controls.Add(_statusStrip);  // Feature 3
+        Controls.Add(_statusStrip);
 
         // --- イベント登録 ---
         btnSelectImage.Click += BtnSelectImage_Click;
@@ -454,7 +453,6 @@ public class MainForm : Form
                 inferenceMs = result.InferenceMs > 0 ? result.InferenceMs : sw.ElapsedMilliseconds;
             }
             ShowResult(result, inferenceMs);
-            // Feature 4: 検査ログ
             AppLogger.LogInspection(fileName, result.Result, result.Score,
                                     result.DefectType, inferenceMs,
                                     useOnnx ? "ONNX" : "FastAPI");
@@ -464,7 +462,7 @@ public class MainForm : Form
             sw.Stop();
             apiStatus = $"エラー: {ex.Message}";
             ShowError(ex.Message);
-            AppLogger.LogInferenceFailed(fileName, ex);  // Feature 4
+            AppLogger.LogInferenceFailed(fileName, ex);
         }
         finally
         {
@@ -513,14 +511,13 @@ public class MainForm : Form
         btnCheckApi.Enabled    = false;
         lblApiStatus.Text      = "API: 確認中...";
         lblApiStatus.ForeColor = Color.DarkOrange;
-        ssApi.Text             = "API: 確認中";   // Feature 3
+        ssApi.Text             = "API: 確認中";
 
         bool ok = await _apiClient.CheckHealthAsync();
 
         lblApiStatus.Text      = ok ? "API: 接続中 ✓" : "API: 未接続 ✗";
         lblApiStatus.ForeColor = ok ? Color.SeaGreen : Color.Crimson;
         btnCheckApi.Enabled    = true;
-        // Feature 3
         ssApi.Text      = ok ? "API: 接続中 ✓" : "API: 未接続 ✗";
         ssApi.ForeColor = ok ? Color.SeaGreen : Color.Crimson;
     }
@@ -540,7 +537,7 @@ public class MainForm : Form
         {
             AppSettingsService.Save(form.ResultSettings);
             ApplySettings(form.ResultSettings);
-            AppLogger.LogSettingsChanged();  // Feature 4
+            AppLogger.LogSettingsChanged();
             MessageBox.Show("設定を保存しました。", "設定", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
     }
@@ -554,7 +551,6 @@ public class MainForm : Form
         _apiClient.Dispose();
         _apiClient = new InspectionApiClient(s.ApiUrl, s.ApiTimeoutSeconds);
 
-        // Feature 4: ログ保存先
         AppLogger.LogsDir = string.IsNullOrWhiteSpace(s.CsvDirectory)
             ? Path.Combine(AppContext.BaseDirectory, "Logs")
             : Path.Combine(s.CsvDirectory, "Logs");
@@ -565,11 +561,11 @@ public class MainForm : Form
             try
             {
                 _onnxService.LoadModel(s.OnnxModelPath);
-                AppLogger.LogModelLoaded(s.OnnxModelPath);  // Feature 4
+                AppLogger.LogModelLoaded(s.OnnxModelPath);
             }
             catch (Exception ex)
             {
-                AppLogger.LogModelLoadFailed(s.OnnxModelPath, ex);  // Feature 4
+                AppLogger.LogModelLoadFailed(s.OnnxModelPath, ex);
                 ShowError($"ONNXモデルの読み込みに失敗しました:\n{ex.Message}");
             }
         }
@@ -581,14 +577,14 @@ public class MainForm : Form
             {
                 lblApiStatus.Text      = "ONNXモード (API不要)";
                 lblApiStatus.ForeColor = Color.DarkCyan;
-                ssApi.Text      = "API: (ONNX不使用)";  // Feature 3
+                ssApi.Text      = "API: (ONNX不使用)";
                 ssApi.ForeColor = Color.DimGray;
             }
             else
             {
                 lblApiStatus.Text      = "API: 未確認";
                 lblApiStatus.ForeColor = Color.Gray;
-                ssApi.Text      = "API: 未確認";  // Feature 3
+                ssApi.Text      = "API: 未確認";
                 ssApi.ForeColor = Color.Gray;
             }
         }
@@ -615,7 +611,6 @@ public class MainForm : Form
             }
         }
 
-        // Feature 1: モデル情報パネル更新
         if (lblModelMode != null)
             UpdateModelInfo(s);
 
@@ -623,7 +618,6 @@ public class MainForm : Form
         NgImageSaverService.NgDirectory = s.NgImageDirectory;
     }
 
-    // Feature 1: モデル情報パネル更新 ────────────────────────────
     private void UpdateModelInfo(AppSettings s)
     {
         if (s.InferenceMode == "ONNX")
@@ -634,7 +628,7 @@ public class MainForm : Form
             bool loaded = _onnxService.IsLoaded;
             lblModelStatus.Text      = loaded ? "読込状態: 正常 ✓" : "読込状態: 未読込 ✗";
             lblModelStatus.ForeColor = loaded ? Color.SeaGreen : Color.Crimson;
-            ssModel.Text      = loaded ? "MODEL: 正常 ✓" : "MODEL: 未読込 ✗";  // Feature 3
+            ssModel.Text      = loaded ? "MODEL: 正常 ✓" : "MODEL: 未読込 ✗";
             ssModel.ForeColor = loaded ? Color.SeaGreen : Color.Crimson;
         }
         else
@@ -644,7 +638,7 @@ public class MainForm : Form
             lblModelInput.Text       = "入力サイズ: (サーバー側)";
             lblModelStatus.Text      = "読込状態: (サーバー側)";
             lblModelStatus.ForeColor = Color.Gray;
-            ssModel.Text      = "MODEL: FastAPI";  // Feature 3
+            ssModel.Text      = "MODEL: FastAPI";
             ssModel.ForeColor = Color.DimGray;
         }
     }
@@ -668,15 +662,15 @@ public class MainForm : Form
             lblImagePath.Text      = "カメラ映像";
             _selectedImagePath     = null;
 
-            AppLogger.LogCameraStarted(cameraIndex);               // Feature 4
-            ssCamera.Text      = $"CAMERA: 起動中 (idx={cameraIndex})";  // Feature 3
+            AppLogger.LogCameraStarted(cameraIndex);
+            ssCamera.Text      = $"CAMERA: 起動中 (idx={cameraIndex})";
             ssCamera.ForeColor = Color.SeaGreen;
         }
         catch (Exception ex)
         {
             _cameraService?.Dispose();
             _cameraService = null;
-            AppLogger.LogCameraError(cameraIndex, ex);  // Feature 4
+            AppLogger.LogCameraError(cameraIndex, ex);
             ShowError($"カメラの起動に失敗しました:\n{ex.Message}");
         }
     }
@@ -708,8 +702,8 @@ public class MainForm : Form
             lblImagePath.Text      = "画像が選択されていません";
             _selectedImagePath     = null;
 
-            AppLogger.LogCameraStopped();       // Feature 4
-            ssCamera.Text      = "CAMERA: 停止";  // Feature 3
+            AppLogger.LogCameraStopped();
+            ssCamera.Text      = "CAMERA: 停止";
             ssCamera.ForeColor = Color.Gray;
         }
     }
@@ -830,6 +824,6 @@ public class MainForm : Form
         _apiClient.Dispose();
         _onnxService.Dispose();
         picImage.Image?.Dispose();
-        AppLogger.Stop();  // Feature 4
+        AppLogger.Stop();
     }
 }

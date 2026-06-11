@@ -85,6 +85,41 @@ C# WinForms による操作画面と Python FastAPI バックエンドを組み�
 
 ---
 
+## システム構成図
+
+```mermaid
+graph TD
+    A[カメラ / 画像ファイル] -->|Webカメラ: OpenCvSharp\n画像ファイル: ファイルダイアログ| B[WinForms HMI\nMainForm.cs]
+
+    B -->|推論モード判定| C{推論モード}
+
+    C -->|FastAPI モード| D[HTTP POST /inspect\nmultipart/form-data]
+    D --> E[FastAPI Backend\nPython]
+    E --> F[前処理\ncv2.resize 224×224]
+    F --> G[ONNX Runtime\nサーバー側推論]
+    G --> H[Softmax + ArgMax\n判定生成]
+    H -->|JSON レスポンス| B
+
+    C -->|ONNX モード| I[OnnxInspectionService\nC# インプロセス]
+    I --> J[前処理\nLockBits + NCHW変換]
+    J --> K[正規化\nImageNet: mean/std\nカスタム: /255]
+    K --> L[InferenceSession.Run\nMicrosoft.ML.OnnxRuntime]
+    L --> M[Softmax → Top5取得\n判定生成]
+    M --> B
+
+    B --> N[OK/NG バナー表示\n確信度・推論クラス\n推論時間・Top5候補]
+    B --> O[CSV ログ保存\ninspection_log_YYYYMMDD.csv]
+    B --> P[NG 画像自動保存\nResults/NG/]
+    B --> Q[アプリログ\napp_YYYYMMDD.log]
+
+    style A fill:#E8F5E9
+    style B fill:#E3F2FD
+    style E fill:#FFF3E0
+    style N fill:#F3E5F5
+    style O fill:#E8F5E9
+    style P fill:#FFEBEE
+```
+
 ## アーキテクチャ
 
 ```
@@ -447,7 +482,19 @@ OpenCvSharp VideoCapture
 
 ```bash
 cd backend
+
+# 仮想環境の作成と有効化（推奨）
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+# source .venv/bin/activate   # Linux / macOS
+
+# 依存ライブラリのインストール
 pip install -r requirements.txt
+
+# 環境変数の設定（任意）
+copy .env.example .env        # Windows
+# cp .env.example .env        # Linux / macOS
+# .env を編集してモデルパス・閾値等を設定
 
 # FastAPI サーバー起動
 uvicorn app.main:app --host 0.0.0.0 --port 8000
@@ -456,6 +503,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 curl http://localhost:8000/health
 # → {"status":"ok","message":"Vision Inspection API is running"}
 ```
+
+> **モデルファイルについて:** `*.onnx` ファイルは `.gitignore` により Git 管理対象外です。  
+> モデルファイルは別途共有フォルダ・クラウドストレージ等から取得し、`backend/models/` に配置してください。
 
 ### フロントエンドビルド
 
@@ -596,29 +646,170 @@ tensor[B] = (b / 255f - 0.406f) / 0.225f;
 
 ---
 
+## 実運用評価
+
+本システムは **PoC（概念実証）〜 小規模パイロット導入レベル** に相当します。
+
+### 現在の対応状況
+
+| 評価項目 | 状態 | 備考 |
+|----------|------|------|
+| 単品検査 (手動) | ✅ 実装済 | 画像ファイル選択・カメラ撮像 |
+| ONNX ローカル推論 | ✅ 実装済 | オフライン動作・低レイテンシ |
+| FastAPI ネットワーク推論 | ✅ 実装済 | 中央集権モデル管理 |
+| CSV ログ・NG 画像保存 | ✅ 実装済 | 検査トレーサビリティ |
+| 設定外部化 (JSON) | ✅ 実装済 | 再ビルド不要で閾値変更可能 |
+| PLC 連携 (自動トリガ) | ❌ 未実装 | **ライン自動化に必須** |
+| 連続自動検査モード | ❌ 未実装 | タクトタイム合わせには必要 |
+| カスタムモデル学習 | ❌ 未実装 | 実製品への適用には再学習が必要 |
+| 照明変動対策 | ❌ 未実装 | ハードウェア側での対応が前提 |
+| フェイルセーフ出力 | ❌ 未実装 | 推論エラー時の安全停止指令 |
+| モデルバージョン管理 | ❌ 未実装 | 本番運用では必須 |
+
+### 実運用導入時の課題と対策
+
+| 課題 | 内容 | 対策案 |
+|------|------|--------|
+| **誤判定対策** | 過検出（良品をNGと判定）が生産を止める | 閾値チューニング・多段判定・人による再確認ゾーン |
+| **照明変動** | 周囲光・経年劣化でスコアが変動 | 同軸落射 / ドーム照明の固定化、定期的な閾値再評価 |
+| **カメラ位置ズレ** | 振動・治具ガタで画角ズレが発生 | テンプレートマッチングによる位置補正前処理 |
+| **処理速度** | 初回推論 511ms はタクトタイム不足の可能性 | GPU化 (DirectML/CUDA) または TensorRT変換で10ms台へ |
+| **モデル更新** | 新規欠陥種別や季節変動への対応 | CI/CD パイプラインでモデル差し替え → API サーバーのホットスワップ |
+| **トレーサビリティ** | 不良品の遡及調査 | シリアル番号と検査結果の紐付けスキーマ追加 |
+
+---
+
+## PLC 連携設計（次フェーズ）
+
+製造ラインへの本格導入に向けた Modbus TCP / C# による PLC 連携設計案です。
+
+### 通信フロー
+
+```
+PLC                           WinForms HMI
+ │                                 │
+ │  撮像完了トリガ (コイル ON)       │
+ │────────────────────────────────→│
+ │                                 │  OnnxInspectionService.InspectAsync()
+ │                                 │  ← 推論実行 (~50ms)
+ │  結果レジスタ書き込み要求         │
+ │←────────────────────────────────│
+ │  HR1000: 判定 (1=OK / 2=NG)     │
+ │  HR1001: 確信度スコア (×1000)   │
+ │  HR1002: 欠陥クラス ID (0〜6)   │
+ │  HR1003: 推論時間 ms            │
+ │                                 │
+ │  結果確認完了 (コイル OFF)        │
+ │────────────────────────────────→│
+```
+
+### レジスタ設計案
+
+| アドレス | 種別 | 方向 | 内容 |
+|----------|------|------|------|
+| HR0000 | Holding Register | PLC → HMI | 撮像トリガ (1=撮像要求, 0=待機) |
+| HR0001 | Holding Register | PLC → HMI | ライン ID / ワーク番号 (下位16bit) |
+| HR1000 | Holding Register | HMI → PLC | 判定結果 (0=処理中, 1=OK, 2=NG, 9=エラー) |
+| HR1001 | Holding Register | HMI → PLC | 確信度スコア (0〜1000, ×0.001 で 0.0〜1.0) |
+| HR1002 | Holding Register | HMI → PLC | 欠陥クラス ID (0=none, 1=scratch … 6=unknown) |
+| HR1003 | Holding Register | HMI → PLC | 推論時間 (ms) |
+
+### C# クラス設計案
+
+```csharp
+// NuGet: HslCommunication
+using HslCommunication.Profinet.Melsec; // または ModbusTcpNet
+
+public sealed class PlcInspectionBridge : IDisposable
+{
+    private readonly ModbusTcpNet _plc;
+    private readonly OnnxInspectionService _onnx;
+    private CancellationTokenSource? _cts;
+
+    public PlcInspectionBridge(string plcIp, int port, OnnxInspectionService onnx)
+    {
+        _plc  = new ModbusTcpNet(plcIp, port) { AddressStartWithZero = true };
+        _onnx = onnx;
+    }
+
+    public void StartPolling(string latestImagePath, double threshold)
+    {
+        _cts = new CancellationTokenSource();
+        Task.Run(() => PollLoop(latestImagePath, threshold, _cts.Token));
+    }
+
+    private async Task PollLoop(string imagePath, double threshold, CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            // HR0000 = 1 でトリガ検出
+            var trigger = _plc.ReadInt16("HR0000");
+            if (trigger.IsSuccess && trigger.Content == 1)
+            {
+                // 処理中を通知
+                _plc.Write("HR1000", (short)0);
+
+                try
+                {
+                    var result = await _onnx.InspectAsync(imagePath, threshold);
+                    _plc.Write("HR1000", (short)(result.Result == "OK" ? 1 : 2));
+                    _plc.Write("HR1001", (short)(result.Score * 1000));
+                    _plc.Write("HR1002", (short)Array.IndexOf(DefectLabels, result.DefectType));
+                    _plc.Write("HR1003", (short)result.InferenceMs);
+                }
+                catch
+                {
+                    _plc.Write("HR1000", (short)9); // エラーコード
+                }
+            }
+            await Task.Delay(10, ct); // 10ms ポーリング
+        }
+    }
+
+    public void Dispose() { _cts?.Cancel(); _plc.ConnectClose(); }
+}
+```
+
+### 異常時フェイルセーフ
+
+- 推論エラー → `HR1000 = 9` (エラーコード) を書き込み → PLC 側でライン停止
+- HMI プロセスクラッシュ → TCP 切断を PLC がタイムアウト検知 → 安全停止
+- モデル未ロード → トリガ受付前に HR1000 = 9 を初期値として設定
+
+### 実装ステップ
+
+1. **Step 1 (PoC):** `PlcInspectionBridge` クラスのダミーPLC接続テスト
+2. **Step 2 (結合):** PLC シミュレータ（FA Simulator 等）で通信確認
+3. **Step 3 (現場):** 実PLC 接続・タクトタイム測定・閾値チューニング
+4. **Step 4 (安定化):** ウォッチドッグタイマ・異常復帰ロジック追加
+
+---
+
 ## 今後の拡張予定
 
-### 短期（機能拡張）
+### すぐ対応すべき項目
 
-- [ ] **リアルタイム連続検査モード** — 一定間隔での自動推論ループ
+- [ ] **PLC 連携 (Modbus TCP)** — ライン自動化の最優先課題
+- [ ] **カスタムモデル学習** — 実製品画像での転移学習（EfficientNet-B0 推奨）
+- [ ] **連続自動検査モード** — タイマー or PLC トリガによる自動ループ
+- [ ] **GPU 推論対応** — DirectML / CUDA Execution Provider で高速化
+
+### 次に対応すべき項目
+
 - [ ] **NG 画像レビュー画面** — 保存済み NG 画像の一覧・拡大表示
 - [ ] **検査レポート出力** — 日次/週次集計の PDF 生成
 - [ ] **音声アラート** — NG 検出時のビープ音・警告音
-
-### 中期（AI 高精度化）
-
-- [ ] **カスタムモデル学習ガイド** — 実製品画像での転移学習チュートリアル
-- [ ] **異常検知モデル対応** — PatchCore / PaDiM（教師なし異常検知）
 - [ ] **欠陥箇所ヒートマップ** — Grad-CAM による可視化
-- [ ] **モデルベンチマーク** — ResNet18/50・EfficientNet との精度・速度比較
+- [ ] **モデルバージョン管理** — 推論履歴とモデルハッシュの紐付け
 
-### 長期（システム拡張）
+### 将来的に対応する項目
 
-- [ ] **PLC 連携** — Modbus TCP / OPC-UA による生産設備インターフェース
-- [ ] **データ収集・ラベリング機能** — 検査画像の自動収集・アノテーション支援
+- [ ] **異常検知モデル対応** — PatchCore / PaDiM（教師なし異常検知）
 - [ ] **Web ダッシュボード** — 管理者向け統計・トレンド分析
 - [ ] **マルチカメラ対応** — 複数カメラの同時監視
+- [ ] **OPC-UA 対応** — 上位 MES システムとの連携
 - [ ] **エッジデバイス対応** — NVIDIA Jetson / Raspberry Pi へのデプロイ
+- [ ] **データ収集・ラベリング機能** — 検査画像の自動収集・アノテーション支援
 
 ---
 
