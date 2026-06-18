@@ -247,8 +247,12 @@ vision-inspection-system/
 │   │   ├── main.py                   # FastAPI エントリポイント
 │   │   ├── config.py                 # 設定 (モデルパス・閾値等)
 │   │   ├── preprocessing.py          # 画像前処理
-│   │   ├── inference.py              # ONNX 推論ロジック
-│   │   └── schemas.py                # Pydantic スキーマ
+│   │   ├── inference.py              # ONNX 推論ロジック（モデルロード状態チェック含む）
+│   │   ├── schemas.py                # Pydantic スキーマ
+│   │   ├── dataset_loader.py         # データセット読み込み (MVTec/フォルダ/CSV)
+│   │   ├── metrics.py                # 評価指標計算 (Accuracy/Precision/Recall/F1/混同行列)
+│   │   ├── evaluation.py             # データセット評価コア (CSV/JSON 出力)
+│   │   └── evaluate_cli.py           # 評価 CLI ランナー
 │   ├── models/
 │   │   ├── sample_model.onnx         # カスタム7クラス欠陥分類モデル
 │   │   ├── mobilenetv2.onnx          # MobileNetV2 (ONNX形式、同梱済み)
@@ -596,6 +600,113 @@ FastAPI 自動生成ドキュメント: `http://localhost:8000/docs`
 | 4 | `shape` | 形状異常 | NG |
 | 5 | `label` | ラベル・印字ズレ | NG |
 | 6 | `unknown` | その他の異常 | NG |
+
+---
+
+## データセット評価機能（バックエンド / Python）
+
+### 目的
+
+学習・チューニング済みモデルが **データセット全体に対してどの程度の検査精度を持つか**を定量的に把握するための一括評価機能です。  
+正解ラベル付きの画像群を既存の Python 推論パイプライン（`/inspect` と同一ロジック）でまとめて推論し、Accuracy・Precision・Recall・F1・混同行列・平均推論時間を算出してファイル出力します。  
+モデル選定・閾値チューニング・リリース前の品質確認に利用できます。
+
+> 現在は **Python CLI による評価コア**を提供します（`/evaluate` API・HMI 画面からの実行は未実装。下記「将来拡張」参照）。
+
+### 対応データセット形式
+
+| 形式 | 指定値 | 構造 | ラベルの決定方法 |
+|------|--------|------|------------------|
+| **MVTec AD 形式** | `mvtec` | `<category>/test/<defect_type>/*.png` | `good` → OK、それ以外（scratch 等）→ NG。`train/`・`ground_truth/` は無視 |
+| **フォルダ階層形式** | `folder` | `<root>/<label>/*.jpg` | 直下のサブフォルダ名をラベルとし OK/NG へ正規化 |
+| **CSV 形式** | `csv` | `image_path,label` の2列 | 各行のラベルを OK/NG へ正規化（ヘッダー行・相対パスに対応） |
+
+> ラベル正規化: `good / ok / none / normal / pass / negative / 正常` を **OK**、それ以外を **NG** として扱います（外観検査の判定単位である OK/NG 二値で評価）。
+
+### 実行コマンド例
+
+`backend/` ディレクトリで実行します。
+
+```bash
+cd backend
+
+# MVTec AD 形式
+python -m app.evaluate_cli --dataset ./datasets/bottle --format mvtec
+
+# フォルダ階層形式（<root>/<label>/*.jpg）
+python -m app.evaluate_cli --dataset ./datasets/sample --format folder
+
+# CSV 形式（image_path,label）
+python -m app.evaluate_cli --dataset ./labels.csv --format csv --output ./eval_output
+
+# 別モデルで評価する場合は MODEL_PATH 環境変数で指定
+MODEL_PATH=./models/sample_model.onnx python -m app.evaluate_cli --dataset ./datasets/sample --format folder
+```
+
+| オプション | 内容 |
+|------------|------|
+| `--dataset` | データセットのパス（フォルダ or CSV ファイル）。**必須** |
+| `--format` | `mvtec` / `folder` / `csv` のいずれか。**必須** |
+| `--output` | 出力先ルート（既定: `eval_output`）。実行ごとにタイムスタンプ付きサブフォルダを作成 |
+| `--allow-dummy` | 検証用。実モデル未ロードでもダミー判定で評価を続行（通常は使用しない） |
+
+### 出力ファイル
+
+実行ごとに `<output>/eval_YYYYMMDD_HHMMSS/` が作成され、2 ファイルが出力されます。
+
+```
+eval_output/
+└── eval_20260616_205149/
+    ├── evaluation_results.csv      # サンプル単位の詳細結果
+    └── evaluation_summary.json     # 集計サマリ（指標・メタ情報）
+```
+
+**`evaluation_results.csv`**（UTF-8 BOM 付き / Excel 互換）
+
+| 列 | 内容 |
+|----|------|
+| `image_path` | 画像パス |
+| `true_label` | 生ラベル（フォルダ名 / CSV ラベル / MVTec 欠陥種別） |
+| `true_class` | 正規化後の正解（OK/NG） |
+| `predicted_result` | 推論判定（OK/NG） |
+| `predicted_defect_type` | 推論欠陥種別 |
+| `score` | 確信度スコア |
+| `inference_ms` | 1枚あたり推論時間（ms） |
+| `correct` | 正誤（1=正解 / 0=不正解） |
+
+**`evaluation_summary.json`** — 評価エンジン・モデル状態・データセット情報・各種指標・推論時間統計・前処理に関する注意書き（`notes`）を含みます。
+
+### 評価指標
+
+| 指標 | 内容 |
+|------|------|
+| **Accuracy** | 全体正解率 |
+| **Precision** | 適合率（既定で NG を陽性クラスとして算出。クラス別の値も `per_class` に出力） |
+| **Recall** | 再現率（不良の見逃しにくさ。NG 基準） |
+| **F1-score** | Precision と Recall の調和平均 |
+| **Confusion Matrix** | 混同行列（行=正解, 列=予測, 順=`["OK", "NG"]`） |
+| **平均推論時間** | 1枚あたり推論時間の平均（avg / min / max / p95 を出力） |
+
+> 指標計算は **NumPy のみ**で実装しており、scikit-learn 等の追加依存はありません。
+
+### 注意点
+
+- **評価エンジンは FastAPI / Python 側を基準**とします（`onnxruntime` + `app.inference` / `app.preprocessing`）。サマリの `engine` フィールドに明記されます。
+- **Python 前処理は `/255` 正規化のみ**です（`preprocessing.to_tensor`）。
+- **C# HMI の ONNX モード（ImageNet モデル）は ImageNet mean/std 正規化**を行うため前処理が異なり、**同一モデルでも HMI 側の推論結果と差分が出る可能性があります**。この注意書きは `evaluation_summary.json` の `notes` にも記録されます。
+- **モデル未ロード時はダミー判定で評価しません。** 評価開始前に実 ONNX モデルのロード状態を確認し、未配置・読込失敗の場合はエラー（終了コード 3）で中止します。これにより、ルールベースのダミー判定で誤った精度を算出することを防ぎます。
+
+### 将来拡張
+
+- [ ] **`/evaluate` API 化** — FastAPI エンドポイント経由でのデータセット評価実行
+- [ ] **HMI 画面からの評価実行** — WinForms 上でデータセットを選択し、評価結果を可視化
+- [ ] **非同期ジョブ化** — 大規模データセット向けにジョブ投入・進捗取得・キャンセルに対応
+- [ ] **評価結果の可視化** — 混同行列ヒートマップ・PR 曲線・誤分類サムネイル一覧
+
+### ポートフォリオ掲載用説明文
+
+> **データセット評価機能（Python 評価コア）**  
+> 製造業向け AI 外観検査システムに、モデルの検査精度を定量評価するためのデータセット一括評価機能を実装しました。MVTec AD 形式・フォルダ階層形式・CSV 形式の3方式の入力に対応し、本番推論と同一の前処理・推論ロジックを再利用することで評価と運用の整合性を担保しています。Accuracy / Precision / Recall / F1 / 混同行列 / 平均推論時間を算出し、詳細 CSV と JSON サマリとして出力します。評価エンジン基準（FastAPI/Python）の明示、C# HMI との前処理差分の注意喚起、モデル未ロード時のダミー判定ガードなど、**評価結果の信頼性を損なわないための設計**を重視しました。指標計算は NumPy のみで実装し、追加依存を増やさない構成としています。
 
 ---
 

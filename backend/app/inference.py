@@ -112,5 +112,30 @@ def run_inference(tensor: np.ndarray) -> dict:
     }
 
 
+def is_real_model_loaded() -> bool:
+    """実 ONNX モデルがロード済みか（ダミー判定でないか）を返す。
+
+    データセット評価では、モデル未配置時のダミー判定（ルールベース）で
+    評価指標を算出してしまうことを防ぐため、評価開始前にこの関数で確認する。
+    """
+    global _session, _use_dummy
+    if _session is None and not _use_dummy:
+        _load_session()
+    return _session is not None and not _use_dummy
+
+
+def get_model_status() -> dict:
+    """モデルの読み込み状態を返す（UI / 評価レポート / ログ用）。"""
+    global _session, _use_dummy
+    if _session is None and not _use_dummy:
+        _load_session()
+    return {
+        "model_path": str(MODEL_PATH),
+        "model_exists": Path(MODEL_PATH).exists(),
+        "loaded": _session is not None,
+        "using_dummy": _use_dummy,
+    }
+
+
 # モジュール読み込み時に初期化
 _load_session()
