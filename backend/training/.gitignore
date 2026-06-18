@@ -1,0 +1,10 @@
+# 学習用の大容量・生成物はコミットしない
+.venv-train/
+datasets/
+results/
+results_probe/
+exported/
+*.ckpt
+*.tgz
+*.tar.xz
+*.parquet
