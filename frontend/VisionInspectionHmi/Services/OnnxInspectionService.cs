@@ -12,7 +12,7 @@ namespace VisionInspectionHmi.Services;
 /// ONNX Runtime でローカルモデルを実行する推論サービス。
 /// 出力クラス数を自動検出し、ImageNet1000クラスとカスタム7クラスの両モードに対応する。
 /// </summary>
-public sealed class OnnxInspectionService : IDisposable
+public sealed class OnnxInspectionService : IInspectionEngine
 {
     // ── カスタム7クラスモデル用定義 ────────────────────────────────
     private static readonly string[] DefectLabels =
@@ -45,6 +45,9 @@ public sealed class OnnxInspectionService : IDisposable
     private bool IsImageNetMode => _outputSize == 1000;
 
     // ── モデル情報プロパティ ──────────────────────────────────────
+    /// <summary>本サービスは常に分類エンジン。</summary>
+    public InspectionEngineKind Kind => InspectionEngineKind.Classification;
+
     public bool IsLoaded => _session != null;
 
     public string LoadedModelName =>
