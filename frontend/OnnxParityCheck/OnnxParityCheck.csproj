@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    S4: C# ONNX Runtime パリティ検証用の独立コンソール。
+    HMI 本体 (VisionInspectionHmi) とは別プロジェクトであり、ソリューションには未登録。
+    ORT は HMI と同一の 1.20.1 を使用し、実際の C# 出荷環境での一致を検証する。
+    System.Drawing を使うため UseWindowsForms=true（フォームは使わない）。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>OnnxParityCheck</AssemblyName>
+    <RootNamespace>OnnxParityCheck</RootNamespace>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.20.1" />
+  </ItemGroup>
+</Project>

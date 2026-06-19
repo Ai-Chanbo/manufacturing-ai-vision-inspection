@@ -1,6 +1,8 @@
 # .NET build artifacts
 frontend/VisionInspectionHmi/bin/
 frontend/VisionInspectionHmi/obj/
+frontend/OnnxParityCheck/bin/
+frontend/OnnxParityCheck/obj/
 
 # Python cache
 **/__pycache__/
