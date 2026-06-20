@@ -526,6 +526,40 @@ HMI 組み込みに先立ち、**Python `onnxruntime` と C# ONNX Runtime の推
 
 > 基準データは `backend/training/export_reference_csv.py`（Python）で生成し、`frontend/OnnxParityCheck`（C#）で突合します。これにより前処理移植（256 / bicubic / ÷255 / NCHW）の正しさと、ORT バージョン差（Python 1.26 / C# 1.20.1）の影響がないことを担保しています。
 
+### 実データセットでの検証（MVTec AD bottle）
+
+EfficientAD ONNX モデルを HMI に読み込み、**MVTec AD `bottle` の good / 欠陥画像を実際に検査**して OK/NG 判定・異常スコア・ヒートマップ表示を確認しました。
+
+- **モデル:** EfficientAD（ONNX エクスポート、入力 256×256）
+- **データセット:** MVTec AD `bottle/test`
+- **異常検知閾値:** 0.50（`pred_score >= 0.50 → NG`）
+
+| ファイル | 正解ラベル | 判定 | 異常スコア | 期待 |
+|----------|-----------|------|-----------|------|
+| `good/000.png` | 正常 | **OK** | 0.50 | OK ✓ |
+| `broken_large/000.png` | 欠陥 | **NG** | 0.51 | NG ✓ |
+| `broken_small/000.png` | 欠陥 | **NG** | 0.51 | NG ✓ |
+| `contamination/000.png` | 欠陥 | **NG** | 0.50 | NG ✓ |
+
+good は OK、3 種の欠陥（割れ大・割れ小・異物）はいずれも NG と判定され、欠陥画像では `anomaly_map` のヒートマップが欠陥箇所に赤系で重畳されることを確認しました。
+
+<div align="center">
+<table>
+<tr>
+<td align="center"><strong>good 判定（OK）</strong></td>
+<td align="center"><strong>broken_large 判定（NG）</strong></td>
+<td align="center"><strong>異常ヒートマップ重畳</strong></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/efficientad_good_result.png" width="320" alt="EfficientAD good 判定 OK"/></td>
+<td><img src="docs/screenshots/efficientad_ng_result.png" width="320" alt="EfficientAD broken_large 判定 NG"/></td>
+<td><img src="docs/screenshots/anomaly_heatmap.png" width="320" alt="異常ヒートマップ重畳"/></td>
+</tr>
+</table>
+</div>
+
+> **データセットについて:** [MVTec AD](https://www.mvtec.com/company/research/datasets/mvtec-ad) は**非商用の研究用途**で公開されているデータセットです。**データセット本体（画像）は本リポジトリには含めていません**（`.gitignore` 対象）。検証を再現する場合は MVTec の公式サイトから利用条件に同意のうえ取得し、`backend/training/datasets/MVTecAD/` 配下に配置してください。
+
 ### PLC 連携との関係
 
 `PlcInspectionBridge` の依存型を `OnnxInspectionService` から **`IInspectionEngine`** に変更したため、PLC トリガ検査でも分類 / 異常検知の両方をそのまま利用できます。PLC 経路の判定閾値も `MainForm` がエンジン種別に応じて選択します（レジスタマップ・通信フロー自体は変更なし）。なお、ヒートマップ表示は現状**手動検査経路のみ**に限定しています（PLC 処理・CSV 保存ロジックは未変更）。
