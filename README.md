@@ -20,8 +20,9 @@ C# WinForms による操作画面と Python FastAPI バックエンドを組み�
 | 対象用途 | 製造ライン外観検査・品質管理 |
 | 検査方式 | 画像ファイル選択 / Webカメラリアルタイム |
 | AI推論 | FastAPI モード（サーバー） / ONNX モード（ローカル・オフライン） |
-| 対応モデル | カスタム欠陥分類モデル / ImageNet 1000 クラス（MobileNetV2 等） |
-| 出力 | OK/NG 判定 + 信頼度 + Top5候補 + CSV ログ + NG 画像自動保存 |
+| 推論種別 | **分類モデル** / **異常検知モデル（EfficientAD）** を `IInspectionEngine` で切替（自動判定対応） |
+| 対応モデル | カスタム欠陥分類 / ImageNet 1000 クラス（MobileNetV2 等） / EfficientAD（教師なし異常検知） |
+| 出力 | OK/NG 判定 + 信頼度/異常スコア + Top5候補 + 異常ヒートマップ + CSV ログ + NG 画像自動保存 |
 
 ---
 
@@ -58,6 +59,21 @@ C# WinForms による操作画面と Python FastAPI バックエンドを組み�
 </table>
 </div>
 
+### スクリーンショット取得手順（EfficientAD 統合分）
+
+異常検知統合の追加スクリーンショットは以下の手順で取得し、`docs/screenshots/` へ保存します（推奨ファイル名を併記）。
+
+| # | 対象 | 操作手順 | 保存名 |
+|---|------|----------|--------|
+| 1 | **設定画面（モデル種別・異常閾値）** | 設定 → 推論モード=ONNX → モデル種別=`Auto`/`Anomaly`、検査設定に「異常検知閾値」が表示された状態でキャプチャ | `settings_anomaly.png` |
+| 2 | **EfficientAD 推論結果** | ONNX モードで EfficientAD モデルを指定 → MVTec bottle の欠陥画像を選択 → 検査開始 → 判定 NG・異常スコアが表示された状態 | `efficientad_result.png` |
+| 3 | **ヒートマップ表示** | 上記2の状態で画像左上「ヒートマップ」を ON → 欠陥箇所が赤系で重畳された状態 | `anomaly_heatmap.png` |
+| 4 | **分類との違い（対比）** | 同一 UI で分類モデル（MobileNetV2）の Top5 表示と、異常検知の異常スコア＋ヒートマップを並べて対比（2枚 or 並置） | `classification_vs_anomaly.png` |
+
+> 取得手順の標準環境：MVTec AD `bottle/test/broken_large/000.png`（欠陥）と `good/000.png`（良品）を使うと、NG/OK とヒートマップの差が明確になります。
+>
+> Windows のキャプチャは `Alt+PrintScreen`（アクティブウィンドウ）または「Snipping Tool」を使用してください。
+
 ---
 
 ## 主要機能
@@ -66,7 +82,10 @@ C# WinForms による操作画面と Python FastAPI バックエンドを組み�
 - **画像ファイル検査** — JPG / PNG / BMP 対応、ファイルダイアログで選択
 - **Webカメラ検査** — リアルタイムプレビュー＋ワンクリック検査
 - **OK/NG 判定** — スコア閾値による自動判定（設定画面で変更可）
-- **Top5 推論候補** — 上位5クラスの信頼度を一覧表示
+- **Top5 推論候補** — 上位5クラスの信頼度を一覧表示（分類モデル）
+- **異常検知（EfficientAD）** — 教師なし異常検知モデルに対応。`pred_score` による OK/NG 判定
+- **異常ヒートマップ表示** — `anomaly_map` を jet 配色で原画像に重畳し、異常箇所を可視化（ON/OFF 切替）
+- **エンジン自動切替** — モデル出力から分類 / 異常検知を自動判定（明示指定も可）
 
 ### 📊 記録機能
 - **検査履歴グリッド** — セッション内の全検査結果をリアルタイム表示
@@ -77,8 +96,10 @@ C# WinForms による操作画面と Python FastAPI バックエンドを組み�
 
 ### ⚙️ 設定機能
 - API URL・タイムアウト設定
-- NG 閾値調整（0.0 〜 1.0）
+- NG 閾値調整（分類用 `NgThreshold` 0.01〜0.99）
+- **異常検知閾値（`AnomalyThreshold`）** — 分類用とは独立した異常スコア閾値
 - 推論モード切り替え（FastAPI / ONNX）
+- **モデル種別指定（`OnnxModelType`: Auto / Classification / Anomaly）**
 - ONNX モデルパス指定（ファイルブラウザ）
 - カメラインデックス選択
 - CSV/NG画像の保存先ディレクトリ指定
@@ -226,8 +247,11 @@ graph TD
 |--------|------|------|------|
 | カスタム欠陥分類モデル (`sample_model.onnx`) | float32[1,3,224,224] | float32[1,7] | 製品欠陥分類（デモ用） |
 | MobileNetV2 (ImageNet) | float32[1,3,224,224] | float32[1,1000] | 汎用画像分類 |
+| **EfficientAD (anomalib)** | float32[1,3,256,256] | `pred_score` / `pred_label` / `anomaly_map` / `pred_mask` | 教師なし異常検知（MVTec AD bottle で学習） |
 
 > **`sample_model.onnx` について:** 本プロジェクト用の動作確認・デモ用途のサンプルモデルです。実運用では、対象ワークや検査条件に合わせて再学習したモデルを使用してください。
+
+> **EfficientAD について:** anomalib で学習・ONNX エクスポートした教師なし異常検知モデルです。前処理は 256×256 / `÷255` / RGB / NCHW（mean-std 正規化なし）で、分類モデルとは前処理・出力構造が異なります。学習・エクスポート・検証スクリプトは `backend/training/` を参照してください。
 
 ---
 
@@ -268,7 +292,12 @@ vision-inspection-system/
         │   ├── MainForm.cs           # メイン画面
         │   └── SettingsForm.cs       # 設定ダイアログ
         ├── Services/
-        │   ├── OnnxInspectionService.cs   # ONNX ローカル推論
+        │   ├── IInspectionEngine.cs       # 推論エンジン抽象（分類/異常検知の共通I/F）
+        │   ├── InspectionEngineFactory.cs # モデル種別の自動判定＋エンジン生成
+        │   ├── OnnxInspectionService.cs   # 分類 ONNX ローカル推論
+        │   ├── AnomalyInspectionService.cs# EfficientAD 異常検知推論
+        │   ├── AnomalyHeatmapRenderer.cs  # anomaly_map → ヒートマップ重畳描画
+        │   ├── PlcInspectionBridge.cs     # PLC トリガ連動検査（IInspectionEngine 対応）
         │   ├── InspectionApiClient.cs     # FastAPI HTTP クライアント
         │   ├── CameraService.cs           # Webカメラ管理
         │   ├── AppLogger.cs               # 非同期ファイルログ
@@ -276,11 +305,19 @@ vision-inspection-system/
         │   ├── NgImageSaverService.cs     # NG 画像自動保存
         │   └── AppSettingsService.cs      # JSON 設定永続化
         ├── Models/
-        │   ├── AppSettings.cs         # アプリケーション設定モデル
-        │   ├── InspectionResult.cs    # 推論結果 + Top5 候補
+        │   ├── AppSettings.cs         # 設定（AnomalyThreshold / OnnxModelType 含む）
+        │   ├── InspectionResult.cs    # 推論結果 + Top5 + AnomalyMap 系フィールド
         │   └── InspectionHistory.cs   # 検査履歴レコード
         └── VisionInspectionHmi.csproj
+
+    └── OnnxParityCheck/              # Python↔C# ONNX Runtime パリティ検証コンソール（独立）
+        ├── Program.cs               # Tier1/Tier2 で基準データと突合・PASS/FAIL 判定
+        └── OnnxParityCheck.csproj
 ```
+
+> EfficientAD の学習・ONNX エクスポート・基準推論データ生成は `backend/training/`
+> （`train_efficientad.py` / `export_efficientad.py` / `verify_onnx_infer.py` / `export_reference_csv.py`）にあります。
+> モデル・データセット・生成物は `.gitignore` 対象です。
 
 ---
 
@@ -432,6 +469,66 @@ HMI (C# + ONNX Runtime)
 | MobileNetV2 2回目以降 | 約 50ms |
 
 > 詳細な動作確認結果は [docs/test_result_20260610.md](docs/test_result_20260610.md) を参照。
+
+---
+
+## 異常検知モデル統合（EfficientAD）
+
+分類モデルに加え、**教師なし異常検知モデル EfficientAD** を HMI に統合しました。良品のみで学習でき、未知の欠陥にも反応できるため、欠陥サンプルを十分に集めにくい製造現場に適しています。
+
+### IInspectionEngine による分類 / 異常検知の切替
+
+推論ロジックを `IInspectionEngine` インターフェースで抽象化し、`MainForm` / `PlcInspectionBridge` が具象型に依存せず両方式を扱えるようにしました。
+
+```
+                      ┌────────────────────────┐
+                      │     IInspectionEngine    │  (Kind: Classification / Anomaly)
+                      │  LoadModel / InspectAsync │
+                      └───────────┬────────────┘
+                  ┌───────────────┴───────────────┐
+        ┌─────────▼──────────┐        ┌──────────▼───────────┐
+        │ OnnxInspectionService │        │ AnomalyInspectionService │
+        │  分類 (Softmax/Top5)  │        │  EfficientAD (異常検知)   │
+        │  224×224 / mean-std   │        │  256×256 / ÷255 のみ      │
+        └──────────────────────┘        └──────────────────────────┘
+                  ▲                                   ▲
+                  └──────── InspectionEngineFactory ──┘
+                       Auto: 出力名から種別を自動判定
+                       明示: Classification / Anomaly を指定
+```
+
+- **`InspectionEngineFactory`** がモデルの出力名を見て種別を解決します。`pred_score` と `anomaly_map` を持てば異常検知、それ以外は分類と判定（`OnnxModelType="Auto"`）。設定で `Classification` / `Anomaly` を明示指定することも可能です。
+- 分類モデルの既存挙動（Softmax・Top5・ImageNet 正規化）は一切変更していません。
+
+### 閾値管理（NgThreshold と AnomalyThreshold の分離）
+
+分類の確信度と異常スコアは**意味が異なる**ため、閾値を分離管理します。
+
+| エンジン種別 | 使用閾値 | 判定 |
+|--------------|----------|------|
+| 分類 / FastAPI | `NgThreshold` | 確信度ベース |
+| 異常検知（EfficientAD） | `AnomalyThreshold` | `pred_score >= AnomalyThreshold → NG` |
+
+`MainForm` はエンジンの `Kind` に応じて使用閾値を自動選択します（手動検査・PLC 検査の両経路）。
+
+### 異常ヒートマップ表示
+
+異常検知結果の `anomaly_map`（256×256）を **jet 配色**（低=青 / 高=赤）でカラー化し、原画像へ α 合成して重畳表示します。`AnomalyHeatmapRenderer` が描画を担当し、画像プレビュー左上の「ヒートマップ」チェックボックスで ON/OFF を切り替えられます（再推論なしで再描画）。分類モデル結果では `anomaly_map` が無いため自動的に非表示になります。
+
+### Python / C# ONNX Runtime パリティ検証済み
+
+HMI 組み込みに先立ち、**Python `onnxruntime` と C# ONNX Runtime の推論一致を検証**しました（`frontend/OnnxParityCheck`）。
+
+| 検証層 | 内容 | 結果 |
+|--------|------|------|
+| **Tier1** | Python が書き出した前処理済みテンソルを C# に入力し出力比較（ランタイム純粋比較） | `pred_score` 差 ≤ 5e-9、`anomaly_map` 差 = 0（ビット一致） |
+| **Tier2** | C# が画像から前処理して推論（前処理移植の検証） | `pred_score` 差 ≤ 1e-3（PIL/GDI+ の補間差の範囲） |
+
+> 基準データは `backend/training/export_reference_csv.py`（Python）で生成し、`frontend/OnnxParityCheck`（C#）で突合します。これにより前処理移植（256 / bicubic / ÷255 / NCHW）の正しさと、ORT バージョン差（Python 1.26 / C# 1.20.1）の影響がないことを担保しています。
+
+### PLC 連携との関係
+
+`PlcInspectionBridge` の依存型を `OnnxInspectionService` から **`IInspectionEngine`** に変更したため、PLC トリガ検査でも分類 / 異常検知の両方をそのまま利用できます。PLC 経路の判定閾値も `MainForm` がエンジン種別に応じて選択します（レジスタマップ・通信フロー自体は変更なし）。なお、ヒートマップ表示は現状**手動検査経路のみ**に限定しています（PLC 処理・CSV 保存ロジックは未変更）。
 
 ---
 
@@ -895,6 +992,7 @@ sequenceDiagram
 |----------|------|------|
 | 単品検査 (手動) | ✅ 実装済 | 画像ファイル選択・カメラ撮像 |
 | ONNX ローカル推論 | ✅ 実装済 | オフライン動作・低レイテンシ |
+| 異常検知（EfficientAD） | ✅ 実装済 | IInspectionEngine 切替・ヒートマップ表示・Python/C# パリティ検証済み |
 | FastAPI ネットワーク推論 | ✅ 実装済 | 中央集権モデル管理 |
 | CSV ログ・NG 画像保存 | ✅ 実装済 | 検査トレーサビリティ |
 | 設定外部化 (JSON) | ✅ 実装済 | 再ビルド不要で閾値変更可能 |
@@ -1039,12 +1137,12 @@ public sealed class PlcInspectionBridge : IDisposable
 - [ ] **NG 画像レビュー画面** — 保存済み NG 画像の一覧・拡大表示
 - [ ] **検査レポート出力** — 日次/週次集計の PDF 生成
 - [ ] **音声アラート** — NG 検出時のビープ音・警告音
-- [ ] **欠陥箇所ヒートマップ** — Grad-CAM による可視化
+- [x] **欠陥箇所ヒートマップ** — EfficientAD `anomaly_map` の jet 重畳表示を実装済み（分類向け Grad-CAM は今後）
 - [ ] **モデルバージョン管理** — 推論履歴とモデルハッシュの紐付け
 
 ### 将来的に対応する項目
 
-- [ ] **異常検知モデル対応** — PatchCore / PaDiM（教師なし異常検知）
+- [x] **異常検知モデル対応** — EfficientAD（教師なし異常検知）を統合済み。PatchCore / PaDiM は今後対応
 - [ ] **Web ダッシュボード** — 管理者向け統計・トレンド分析
 - [ ] **マルチカメラ対応** — 複数カメラの同時監視
 - [ ] **OPC-UA 対応** — 上位 MES システムとの連携
