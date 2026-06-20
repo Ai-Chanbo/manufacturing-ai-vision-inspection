@@ -21,7 +21,7 @@ public sealed class PlcInspectionBridge : IDisposable
     public const short ErrorImageSave     = 4; // 画像保存失敗
 
     private readonly IPlcCommunicationService _plc;
-    private readonly OnnxInspectionService    _onnx;
+    private readonly IInspectionEngine        _onnx;
     private readonly PlcSettings              _settings;
 
     private CancellationTokenSource? _cts;
@@ -40,7 +40,7 @@ public sealed class PlcInspectionBridge : IDisposable
 
     public PlcInspectionBridge(
         IPlcCommunicationService plc,
-        OnnxInspectionService    onnx,
+        IInspectionEngine        onnx,
         PlcSettings              settings)
     {
         _plc      = plc;

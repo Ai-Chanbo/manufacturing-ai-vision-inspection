@@ -6,8 +6,10 @@ namespace VisionInspectionHmi.Forms;
 public class MainForm : Form
 {
     // --- サービス ---
-    private InspectionApiClient   _apiClient   = new();
-    private OnnxInspectionService _onnxService = new();
+    private InspectionApiClient _apiClient = new();
+    // ローカル推論エンジン。ONNX モード時に InspectionEngineFactory で生成（分類 / 異常検知）。
+    // FastAPI モードや未ロード時は null。
+    private IInspectionEngine? _engine;
 
     // --- 左パネルコントロール ---
     private Button     btnSelectImage = null!;
@@ -507,7 +509,12 @@ public class MainForm : Form
         {
             if (useOnnx)
             {
-                result     = await _onnxService.InspectAsync(_selectedImagePath, cfg.NgThreshold);
+                if (_engine is null)
+                    throw new InvalidOperationException(
+                        "ONNXモデルが読み込まれていません。設定画面でモデルファイルを指定してください。");
+
+                // 閾値はエンジン種別で切替（分類=NgThreshold / 異常検知=AnomalyThreshold）
+                result      = await _engine.InspectAsync(_selectedImagePath, ResolveThreshold(cfg));
                 inferenceMs = result.InferenceMs;
             }
             else
@@ -621,19 +628,28 @@ public class MainForm : Form
             ? Path.Combine(AppContext.BaseDirectory, "Logs")
             : Path.Combine(s.CsvDirectory, "Logs");
 
-        // ONNX モードならモデルを事前ロード
+        // ONNX モードならモデル種別を解決してエンジンを生成・事前ロード
         if (s.InferenceMode == "ONNX" && !string.IsNullOrWhiteSpace(s.OnnxModelPath))
         {
             try
             {
-                _onnxService.LoadModel(s.OnnxModelPath);
+                _engine?.Dispose();
+                _engine = InspectionEngineFactory.Create(s.OnnxModelPath, s.OnnxModelType);
                 AppLogger.LogModelLoaded(s.OnnxModelPath);
             }
             catch (Exception ex)
             {
+                _engine?.Dispose();
+                _engine = null;
                 AppLogger.LogModelLoadFailed(s.OnnxModelPath, ex);
                 ShowError($"ONNXモデルの読み込みに失敗しました:\n{ex.Message}");
             }
+        }
+        else
+        {
+            // FastAPI モード等ではローカルエンジンを解放
+            _engine?.Dispose();
+            _engine = null;
         }
 
         // API ステータスとStatusStrip更新
@@ -699,14 +715,21 @@ public class MainForm : Form
         }
     }
 
+    /// <summary>
+    /// 現在のエンジン種別に応じて使用する OK/NG 判定閾値を返す。
+    /// 異常検知=AnomalyThreshold / 分類・FastAPI=NgThreshold。
+    /// </summary>
+    private double ResolveThreshold(AppSettings cfg) =>
+        _engine?.Kind == InspectionEngineKind.Anomaly ? cfg.AnomalyThreshold : cfg.NgThreshold;
+
     private void UpdateModelInfo(AppSettings s)
     {
         if (s.InferenceMode == "ONNX")
         {
-            lblModelMode.Text   = $"推論モード: ONNX [{_onnxService.ModelModeText}]";
-            lblModelName.Text   = $"モデル名: {_onnxService.LoadedModelName}";
-            lblModelInput.Text  = $"入力サイズ: {_onnxService.InputShapeText}";
-            bool loaded = _onnxService.IsLoaded;
+            lblModelMode.Text   = $"推論モード: ONNX [{_engine?.ModelModeText ?? "未読込"}]";
+            lblModelName.Text   = $"モデル名: {_engine?.LoadedModelName ?? "未設定"}";
+            lblModelInput.Text  = $"入力サイズ: {_engine?.InputShapeText ?? "---"}";
+            bool loaded = _engine?.IsLoaded ?? false;
             lblModelStatus.Text      = loaded ? "読込状態: 正常 ✓" : "読込状態: 未読込 ✗";
             lblModelStatus.ForeColor = loaded ? Color.SeaGreen : Color.Crimson;
             ssModel.Text      = loaded ? "MODEL: 正常 ✓" : "MODEL: 未読込 ✗";
@@ -831,7 +854,7 @@ public class MainForm : Form
 
         // 推論モードチェック
         var cfg = AppSettingsService.Current;
-        if (cfg.InferenceMode != "ONNX" || !_onnxService.IsLoaded)
+        if (cfg.InferenceMode != "ONNX" || _engine is null || !_engine.IsLoaded)
         {
             ShowError("PLC 連携には ONNX モードのモデル読込が必要です。\n" +
                       "設定画面で「ONNXモード」を選択し、モデルファイルを指定してください。");
@@ -849,10 +872,11 @@ public class MainForm : Form
             AppLogger.Info($"PLCカメラ撮像モード: " +
                            (camCfg.UseFakeCamera ? "FakeCamera" : $"CameraIndex={camCfg.CameraIndex}"));
 
-        _plcBridge = new PlcInspectionBridge(_plcService!, _onnxService, cfg.PlcSettings);
+        _plcBridge = new PlcInspectionBridge(_plcService!, _engine, cfg.PlcSettings);
         _plcBridge.InspectionCompleted += OnPlcInspectionCompleted;
         _plcBridge.StatusChanged       += OnPlcStatusChanged;
-        _plcBridge.StartPolling(AcquireInspectionImageAsync, cfg.NgThreshold);
+        // 閾値はエンジン種別で切替（分類=NgThreshold / 異常検知=AnomalyThreshold）
+        _plcBridge.StartPolling(AcquireInspectionImageAsync, ResolveThreshold(cfg));
 
         btnPlcMonitor.Text      = "■ 監視停止";
         btnPlcMonitor.BackColor = Color.Crimson;
@@ -1165,7 +1189,7 @@ public class MainForm : Form
         _plcService?.Dispose();
         base.OnFormClosed(e);
         _apiClient.Dispose();
-        _onnxService.Dispose();
+        _engine?.Dispose();
         picImage.Image?.Dispose();
         AppLogger.Stop();
     }
