@@ -43,6 +43,12 @@ public class SettingsForm : Form
 
     private readonly AppSettings _originalSettings;
 
+    // 長いパスをマウスオーバーで全文表示する ToolTip
+    private readonly ToolTip _pathTip = new()
+    {
+        AutoPopDelay = 20000, InitialDelay = 400, ReshowDelay = 100,
+    };
+
     public SettingsForm(AppSettings current)
     {
         _originalSettings = current;
@@ -52,9 +58,9 @@ public class SettingsForm : Form
     private void InitializeComponent(AppSettings s)
     {
         Text            = "設定";
-        Size            = new Size(520, 806);
-        MinimumSize     = new Size(520, 806);
-        MaximumSize     = new Size(520, 806);
+        Size            = new Size(620, 806);
+        MinimumSize     = new Size(620, 806);
+        MaximumSize     = new Size(620, 806);
         StartPosition   = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox     = false;
@@ -64,12 +70,12 @@ public class SettingsForm : Form
         var baseFont = new Font("Meiryo UI", 9);
 
         // ── API設定 ──────────────────────────────────────────────
-        var gbApi = CreateGroupBox("API設定", 12, 8, 490, 90);
+        var gbApi = CreateGroupBox("API設定", 12, 8, 592, 90);
 
         var lblUrl = CreateLabel("API URL:", 8, 24, 72);
         txtApiUrl  = new TextBox
         {
-            Left = 84, Top = 22, Width = 398, Height = 22,
+            Left = 84, Top = 22, Width = 498, Height = 22,
             Text = s.ApiUrl, Font = baseFont,
         };
 
@@ -84,7 +90,7 @@ public class SettingsForm : Form
         gbApi.Controls.AddRange([lblUrl, txtApiUrl, lblTimeout, nudApiTimeout, lblTimeoutNote]);
 
         // ── 検査設定 ─────────────────────────────────────────────
-        var gbInspect = CreateGroupBox("検査設定", 12, 106, 490, 90);
+        var gbInspect = CreateGroupBox("検査設定", 12, 106, 592, 90);
 
         var lblThreshold = CreateLabel("NG判定閾値:", 8, 24, 90);
         nudNgThreshold   = new NumericUpDown
@@ -104,11 +110,12 @@ public class SettingsForm : Form
             DecimalPlaces = 2, Increment = (decimal)0.01,
             Value = (decimal)Math.Clamp(s.AnomalyThreshold, 0.01, 0.99),
         };
-        var lblAnomNote = CreateLabel("(異常検知用)", 426, 24, 60, Color.Gray, 8);
+        var lblAnomNote = CreateLabel("(異常検知用)", 426, 24, 96, Color.Gray, 8);
+        lblAnomNote.AutoSize = true;
 
         chkInferenceEnabled = new CheckBox
         {
-            Left = 8, Top = 52, Width = 400, Height = 22, Font = baseFont,
+            Left = 8, Top = 52, AutoSize = true, Font = baseFont,
             Text    = "推論APIを実行する（チェックを外すと検査がスキップされます）",
             Checked = s.InferenceEnabled,
         };
@@ -118,35 +125,36 @@ public class SettingsForm : Form
                                       chkInferenceEnabled]);
 
         // ── 保存設定 ─────────────────────────────────────────────
-        var gbSave = CreateGroupBox("保存設定", 12, 204, 490, 116);
+        var gbSave = CreateGroupBox("保存設定", 12, 204, 592, 116);
 
         var lblCsvDir = CreateLabel("CSV保存先:", 8, 24, 80);
         txtCsvDir     = new TextBox
         {
-            Left = 92, Top = 22, Width = 316, Height = 22, Font = baseFont,
+            Left = 92, Top = 22, Width = 414, Height = 22, Font = baseFont,
             Text = s.CsvDirectory, PlaceholderText = "空欄 = デフォルト (Logs フォルダ)",
         };
-        var btnBrowseCsv = CreateSmallButton("参照...", 414, 21);
+        var btnBrowseCsv = CreateSmallButton("参照...", 512, 21);
         btnBrowseCsv.Click += (_, _) => BrowseFolder(txtCsvDir);
 
         var lblNgDir = CreateLabel("NG画像保存先:", 8, 54, 92);
         txtNgDir     = new TextBox
         {
-            Left = 104, Top = 52, Width = 304, Height = 22, Font = baseFont,
+            Left = 104, Top = 52, Width = 402, Height = 22, Font = baseFont,
             Text = s.NgImageDirectory, PlaceholderText = "空欄 = デフォルト (Results/NG)",
         };
-        var btnBrowseNg = CreateSmallButton("参照...", 414, 51);
+        var btnBrowseNg = CreateSmallButton("参照...", 512, 51);
         btnBrowseNg.Click += (_, _) => BrowseFolder(txtNgDir);
 
         var lblSaveNote = CreateLabel(
             "空欄の場合はEXEと同じフォルダ内のデフォルトフォルダを使用します",
-            8, 84, 470, Color.Gray, 8);
+            8, 84, 516, Color.Gray, 8);
+        lblSaveNote.AutoSize = true;
 
         gbSave.Controls.AddRange([lblCsvDir, txtCsvDir, btnBrowseCsv,
                                    lblNgDir, txtNgDir, btnBrowseNg, lblSaveNote]);
 
         // ── カメラ設定 ───────────────────────────────────────────
-        var gbCamera = CreateGroupBox("カメラ設定", 12, 328, 490, 130);
+        var gbCamera = CreateGroupBox("カメラ設定", 12, 328, 592, 130);
 
         var lblCamIdx = CreateLabel("カメラ番号(0〜3):", 8, 24, 122);
         cmbCameraIndex = new ComboBox
@@ -161,14 +169,14 @@ public class SettingsForm : Form
 
         chkUseCameraOnTrigger = new CheckBox
         {
-            Left = 8, Top = 52, Width = 470, Height = 18, Font = baseFont,
+            Left = 8, Top = 52, AutoSize = true, Font = baseFont,
             Text    = "PLCトリガ受信時にカメラ自動撮像（OFF = 選択画像を使用）",
             Checked = s.CameraSettings.UseCameraOnPlcTrigger,
         };
 
         chkFakeCamera = new CheckBox
         {
-            Left = 8, Top = 76, Width = 220, Height = 18, Font = baseFont,
+            Left = 8, Top = 76, AutoSize = true, Font = baseFont,
             Text    = "カメラシミュレーター（実カメラ不要）",
             Checked = s.CameraSettings.UseFakeCamera,
         };
@@ -176,11 +184,11 @@ public class SettingsForm : Form
         var lblFakePath = CreateLabel("FakeCamera画像:", 8, 100, 116);
         txtFakeCameraPath = new TextBox
         {
-            Left            = 128, Top = 98, Width = 268, Height = 22, Font = baseFont,
+            Left            = 128, Top = 98, Width = 378, Height = 22, Font = baseFont,
             Text            = s.CameraSettings.FakeCameraImagePath,
             PlaceholderText = "空欄 = タイムスタンプ入りテスト画像を自動生成",
         };
-        var btnBrowseFake = CreateSmallButton("参照...", 402, 97);
+        var btnBrowseFake = CreateSmallButton("参照...", 512, 97);
         btnBrowseFake.Click += (_, _) => BrowseImageFile(txtFakeCameraPath);
 
         gbCamera.Controls.AddRange([lblCamIdx, cmbCameraIndex, lblResNote,
@@ -188,17 +196,17 @@ public class SettingsForm : Form
                                      lblFakePath, txtFakeCameraPath, btnBrowseFake]);
 
         // ── 推論モード設定 ────────────────────────────────────────
-        var gbMode = CreateGroupBox("推論モード設定", 12, 466, 490, 150);
+        var gbMode = CreateGroupBox("推論モード設定", 12, 466, 592, 150);
 
         rbFastApi = new RadioButton
         {
-            Left = 8, Top = 24, Width = 460, Height = 22, Font = baseFont,
+            Left = 8, Top = 24, AutoSize = true, Font = baseFont,
             Text    = "FastAPIモード（バックエンドAPIを経由して推論）",
             Checked = s.InferenceMode != "ONNX",
         };
         rbOnnx = new RadioButton
         {
-            Left = 8, Top = 48, Width = 460, Height = 22, Font = baseFont,
+            Left = 8, Top = 48, AutoSize = true, Font = baseFont,
             Text    = "ONNXモード（ローカルモデルを直接使用、APIなし）",
             Checked = s.InferenceMode == "ONNX",
         };
@@ -206,10 +214,10 @@ public class SettingsForm : Form
         lblOnnxPath = CreateLabel("モデルパス:", 28, 76, 80);
         txtOnnxPath = new TextBox
         {
-            Left = 112, Top = 74, Width = 286, Height = 22, Font = baseFont,
+            Left = 112, Top = 74, Width = 394, Height = 22, Font = baseFont,
             Text = s.OnnxModelPath, PlaceholderText = ".onnxファイルを選択してください",
         };
-        btnBrowseOnnx = CreateSmallButton("参照...", 404, 73);
+        btnBrowseOnnx = CreateSmallButton("参照...", 512, 73);
         btnBrowseOnnx.Click += (_, _) => BrowseOnnxFile();
 
         lblModelType = CreateLabel("モデル種別:", 28, 108, 80);
@@ -225,7 +233,8 @@ public class SettingsForm : Form
             "Anomaly"        => "Anomaly",
             _                => "Auto",
         };
-        var lblModelTypeNote = CreateLabel("Auto=出力から自動判定", 258, 108, 224, Color.Gray, 8);
+        var lblModelTypeNote = CreateLabel("Auto = 出力から自動判定（推奨）", 258, 108, 266, Color.Gray, 8);
+        lblModelTypeNote.AutoSize = true;
 
         rbFastApi.CheckedChanged += (_, _) => UpdateOnnxControls();
         rbOnnx.CheckedChanged   += (_, _) => UpdateOnnxControls();
@@ -237,7 +246,7 @@ public class SettingsForm : Form
 
         // ── PLC設定 ──────────────────────────────────────────────
         var plc = s.PlcSettings;
-        var gbPlc = CreateGroupBox("PLC連携設定（Modbus TCP）", 12, 624, 490, 96);
+        var gbPlc = CreateGroupBox("PLC連携設定（Modbus TCP）", 12, 624, 592, 96);
 
         var lblPlcIp = CreateLabel("IPアドレス:", 8, 24, 82);
         txtPlcIp = new TextBox
@@ -263,7 +272,7 @@ public class SettingsForm : Form
 
         chkPlcFake = new CheckBox
         {
-            Left = 8, Top = 74, Width = 470, Height = 18, Font = baseFont,
+            Left = 8, Top = 74, AutoSize = true, Font = baseFont,
             Text    = "シミュレーターモード（実 PLC 不要 — FakePlcCommunicationService を使用）",
             Checked = plc.UseFakeService,
         };
@@ -274,14 +283,14 @@ public class SettingsForm : Form
         // ── 保存 / キャンセルボタン ──────────────────────────────
         var btnSave = new Button
         {
-            Left = 300, Top = 730, Width = 96, Height = 32,
+            Left = 400, Top = 730, Width = 96, Height = 32,
             Text = "保存", Font = new Font("Meiryo UI", 9, FontStyle.Bold),
             BackColor = Color.SeaGreen, ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
         };
         var btnCancel = new Button
         {
-            Left = 404, Top = 730, Width = 96, Height = 32,
+            Left = 504, Top = 730, Width = 96, Height = 32,
             Text = "キャンセル", Font = new Font("Meiryo UI", 9),
             BackColor = Color.DimGray, ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
@@ -289,6 +298,15 @@ public class SettingsForm : Form
 
         btnSave.Click   += BtnSave_Click;
         btnCancel.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
+
+        // ToolTip: モデルパス / FakeCameraパス / CSV保存先 / NG画像保存先 を全文表示
+        foreach (var tb in new[] { txtOnnxPath, txtFakeCameraPath, txtCsvDir, txtNgDir })
+        {
+            var box = tb;
+            _pathTip.SetToolTip(box, box.Text);
+            box.TextChanged += (_, _) => _pathTip.SetToolTip(box, box.Text);
+        }
+        Disposed += (_, _) => _pathTip.Dispose();
 
         Controls.AddRange([gbApi, gbInspect, gbSave, gbCamera, gbMode, gbPlc, btnSave, btnCancel]);
     }

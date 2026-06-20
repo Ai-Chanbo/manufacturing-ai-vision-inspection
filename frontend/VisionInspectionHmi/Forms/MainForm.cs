@@ -11,6 +11,12 @@ public class MainForm : Form
     // FastAPI モードや未ロード時は null。
     private IInspectionEngine? _engine;
 
+    // モデル名ラベルにフルパスを表示する ToolTip
+    private readonly ToolTip _modelPathTip = new()
+    {
+        AutoPopDelay = 20000, InitialDelay = 400, ReshowDelay = 100,
+    };
+
     // --- 左パネルコントロール ---
     private Button     btnSelectImage = null!;
     private Button     btnInspect     = null!;
@@ -111,8 +117,8 @@ public class MainForm : Form
     {
         AutoScaleMode  = AutoScaleMode.None;
         Text           = "製造業向け 外観検査画像解析システム";
-        Size           = new Size(1100, 865);
-        MinimumSize    = new Size(1100, 855);
+        Size           = new Size(1180, 865);
+        MinimumSize    = new Size(1180, 855);
         StartPosition  = FormStartPosition.CenterScreen;
         BackColor      = Color.FromArgb(240, 240, 245);
 
@@ -280,8 +286,8 @@ public class MainForm : Form
         hColAt.AutoSizeMode     = DataGridViewAutoSizeColumnMode.None; hColAt.Width     = 150;
         hColResult.AutoSizeMode = DataGridViewAutoSizeColumnMode.None; hColResult.Width = 60;
         hColScore.AutoSizeMode  = DataGridViewAutoSizeColumnMode.None; hColScore.Width  = 80;
-        hColDefect.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
-        hColMs.AutoSizeMode     = DataGridViewAutoSizeColumnMode.None; hColMs.Width     = 120;
+        hColDefect.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill; hColDefect.FillWeight = 100; hColDefect.MinimumWidth = 160;
+        hColMs.AutoSizeMode     = DataGridViewAutoSizeColumnMode.None; hColMs.Width     = 140;
         dgvHistory.RowTemplate.Height = 24;
         dgvHistory.EnableHeadersVisualStyles               = false;
         dgvHistory.ColumnHeadersHeightSizeMode             = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
@@ -323,10 +329,10 @@ public class MainForm : Form
             ForeColor = Color.FromArgb(70, 80, 130),
         };
         var infoFont = new Font("Meiryo UI", 8.5f);
-        lblModelMode   = new Label { Text = "推論モード: ---",   Left = 8,   Top = 20, Width = 240, Height = 22, Font = infoFont };
-        lblModelStatus = new Label { Text = "読込状態: ---",     Left = 258, Top = 20, Width = 160, Height = 22, Font = infoFont };
-        lblModelName   = new Label { Text = "モデル名: ---",     Left = 8,   Top = 44, Width = 400, Height = 22, Font = infoFont, AutoEllipsis = true };
-        lblModelInput  = new Label { Text = "入力サイズ: ---",   Left = 8,   Top = 68, Width = 240, Height = 22, Font = infoFont };
+        lblModelMode   = new Label { Text = "推論モード: ---",   Left = 8,   Top = 20, Width = 400, Height = 22, Font = infoFont, AutoEllipsis = true };
+        lblModelStatus = new Label { Text = "読込状態: ---",     Left = 416, Top = 20, Width = 220, Height = 22, Font = infoFont };
+        lblModelName   = new Label { Text = "モデル名: ---",     Left = 8,   Top = 44, Width = 628, Height = 22, Font = infoFont, AutoEllipsis = true };
+        lblModelInput  = new Label { Text = "入力サイズ: ---",   Left = 8,   Top = 68, Width = 360, Height = 22, Font = infoFont };
         modelInfoPanel.Controls.AddRange(
             [infoTitleLbl, lblModelMode, lblModelStatus, lblModelName, lblModelInput]);
 
@@ -391,27 +397,38 @@ public class MainForm : Form
         rightPanel.Controls.Add(statsPanel);
         rightPanel.Controls.Add(histLabel);
 
-        // ステータスバー（フォーム下部）
+        // ステータスバー（フォーム下部）。Spring=true で横幅に応じ4項目を均等配分
         _statusStrip = new StatusStrip { SizingGrip = false };
         ssApi = new ToolStripStatusLabel
         {
             Text        = "API: ---",
+            Spring      = true,
+            TextAlign   = ContentAlignment.MiddleLeft,
             BorderSides = ToolStripStatusLabelBorderSides.Right,
             BorderStyle = Border3DStyle.Etched,
         };
         ssCamera = new ToolStripStatusLabel
         {
             Text        = "CAMERA: 停止",
+            Spring      = true,
+            TextAlign   = ContentAlignment.MiddleLeft,
             BorderSides = ToolStripStatusLabelBorderSides.Right,
             BorderStyle = Border3DStyle.Etched,
         };
         ssModel = new ToolStripStatusLabel
         {
             Text        = "MODEL: ---",
+            Spring      = true,
+            TextAlign   = ContentAlignment.MiddleLeft,
             BorderSides = ToolStripStatusLabelBorderSides.Right,
             BorderStyle = Border3DStyle.Etched,
         };
-        ssPlc = new ToolStripStatusLabel { Text = "PLC: 未接続" };
+        ssPlc = new ToolStripStatusLabel
+        {
+            Text        = "PLC: 未接続",
+            Spring      = true,
+            TextAlign   = ContentAlignment.MiddleLeft,
+        };
         _statusStrip.Items.AddRange([ssApi, ssCamera, ssModel, ssPlc]);
 
         Controls.Add(rightPanel);
@@ -757,6 +774,9 @@ public class MainForm : Form
             lblModelMode.Text   = $"推論モード: ONNX [{_engine?.ModelModeText ?? "未読込"}]";
             lblModelName.Text   = $"モデル名: {_engine?.LoadedModelName ?? "未設定"}";
             lblModelInput.Text  = $"入力サイズ: {_engine?.InputShapeText ?? "---"}";
+            // ラベルは短い名前を表示し、フルパスは ToolTip で確認できるようにする
+            _modelPathTip.SetToolTip(lblModelName,
+                string.IsNullOrWhiteSpace(s.OnnxModelPath) ? "" : s.OnnxModelPath);
             bool loaded = _engine?.IsLoaded ?? false;
             lblModelStatus.Text      = loaded ? "読込状態: 正常 ✓" : "読込状態: 未読込 ✗";
             lblModelStatus.ForeColor = loaded ? Color.SeaGreen : Color.Crimson;
@@ -768,6 +788,7 @@ public class MainForm : Form
             lblModelMode.Text        = "推論モード: FastAPI";
             lblModelName.Text        = "モデル名: (サーバー側)";
             lblModelInput.Text       = "入力サイズ: (サーバー側)";
+            _modelPathTip.SetToolTip(lblModelName, "");
             lblModelStatus.Text      = "読込状態: (サーバー側)";
             lblModelStatus.ForeColor = Color.Gray;
             ssModel.Text      = "MODEL: FastAPI";
@@ -1274,6 +1295,7 @@ public class MainForm : Form
         base.OnFormClosed(e);
         _apiClient.Dispose();
         _engine?.Dispose();
+        _modelPathTip.Dispose();
         picImage.Image?.Dispose();
         AppLogger.Stop();
     }
