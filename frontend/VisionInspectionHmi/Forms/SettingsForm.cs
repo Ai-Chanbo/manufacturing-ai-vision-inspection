@@ -9,7 +9,8 @@ public class SettingsForm : Form
     private NumericUpDown  nudApiTimeout = null!;
 
     // 検査設定
-    private NumericUpDown nudNgThreshold     = null!;
+    private NumericUpDown nudNgThreshold      = null!;
+    private NumericUpDown nudAnomalyThreshold = null!;
     private CheckBox      chkInferenceEnabled = null!;
 
     // 保存設定
@@ -28,6 +29,8 @@ public class SettingsForm : Form
     private TextBox     txtOnnxPath   = null!;
     private Label       lblOnnxPath   = null!;
     private Button      btnBrowseOnnx = null!;
+    private Label       lblModelType  = null!;
+    private ComboBox    cmbModelType  = null!;
 
     // PLC設定
     private TextBox       txtPlcIp       = null!;
@@ -49,9 +52,9 @@ public class SettingsForm : Form
     private void InitializeComponent(AppSettings s)
     {
         Text            = "設定";
-        Size            = new Size(520, 770);
-        MinimumSize     = new Size(520, 770);
-        MaximumSize     = new Size(520, 770);
+        Size            = new Size(520, 806);
+        MinimumSize     = new Size(520, 806);
+        MaximumSize     = new Size(520, 806);
         StartPosition   = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox     = false;
@@ -91,7 +94,17 @@ public class SettingsForm : Form
             DecimalPlaces = 2, Increment = (decimal)0.05,
             Value = (decimal)Math.Clamp(s.NgThreshold, 0.01, 0.99),
         };
-        var lblThreshNote = CreateLabel("(0.01〜0.99)", 190, 24, 100, Color.Gray, 8);
+        var lblThreshNote = CreateLabel("(分類用)", 188, 24, 64, Color.Gray, 8);
+
+        var lblAnomThreshold = CreateLabel("異常検知閾値:", 252, 24, 92);
+        nudAnomalyThreshold  = new NumericUpDown
+        {
+            Left = 346, Top = 22, Width = 76, Height = 22, Font = baseFont,
+            Minimum = (decimal)0.01, Maximum = (decimal)0.99,
+            DecimalPlaces = 2, Increment = (decimal)0.01,
+            Value = (decimal)Math.Clamp(s.AnomalyThreshold, 0.01, 0.99),
+        };
+        var lblAnomNote = CreateLabel("(異常検知用)", 426, 24, 60, Color.Gray, 8);
 
         chkInferenceEnabled = new CheckBox
         {
@@ -100,7 +113,9 @@ public class SettingsForm : Form
             Checked = s.InferenceEnabled,
         };
 
-        gbInspect.Controls.AddRange([lblThreshold, nudNgThreshold, lblThreshNote, chkInferenceEnabled]);
+        gbInspect.Controls.AddRange([lblThreshold, nudNgThreshold, lblThreshNote,
+                                      lblAnomThreshold, nudAnomalyThreshold, lblAnomNote,
+                                      chkInferenceEnabled]);
 
         // ── 保存設定 ─────────────────────────────────────────────
         var gbSave = CreateGroupBox("保存設定", 12, 204, 490, 116);
@@ -173,7 +188,7 @@ public class SettingsForm : Form
                                      lblFakePath, txtFakeCameraPath, btnBrowseFake]);
 
         // ── 推論モード設定 ────────────────────────────────────────
-        var gbMode = CreateGroupBox("推論モード設定", 12, 466, 490, 116);
+        var gbMode = CreateGroupBox("推論モード設定", 12, 466, 490, 150);
 
         rbFastApi = new RadioButton
         {
@@ -197,16 +212,32 @@ public class SettingsForm : Form
         btnBrowseOnnx = CreateSmallButton("参照...", 404, 73);
         btnBrowseOnnx.Click += (_, _) => BrowseOnnxFile();
 
+        lblModelType = CreateLabel("モデル種別:", 28, 108, 80);
+        cmbModelType = new ComboBox
+        {
+            Left = 112, Top = 106, Width = 140, Height = 22, Font = baseFont,
+            DropDownStyle = ComboBoxStyle.DropDownList,
+        };
+        cmbModelType.Items.AddRange(["Auto", "Classification", "Anomaly"]);
+        cmbModelType.SelectedItem = s.OnnxModelType switch
+        {
+            "Classification" => "Classification",
+            "Anomaly"        => "Anomaly",
+            _                => "Auto",
+        };
+        var lblModelTypeNote = CreateLabel("Auto=出力から自動判定", 258, 108, 224, Color.Gray, 8);
+
         rbFastApi.CheckedChanged += (_, _) => UpdateOnnxControls();
         rbOnnx.CheckedChanged   += (_, _) => UpdateOnnxControls();
 
-        gbMode.Controls.AddRange([rbFastApi, rbOnnx, lblOnnxPath, txtOnnxPath, btnBrowseOnnx]);
+        gbMode.Controls.AddRange([rbFastApi, rbOnnx, lblOnnxPath, txtOnnxPath, btnBrowseOnnx,
+                                   lblModelType, cmbModelType, lblModelTypeNote]);
 
         UpdateOnnxControls();
 
         // ── PLC設定 ──────────────────────────────────────────────
         var plc = s.PlcSettings;
-        var gbPlc = CreateGroupBox("PLC連携設定（Modbus TCP）", 12, 588, 490, 96);
+        var gbPlc = CreateGroupBox("PLC連携設定（Modbus TCP）", 12, 624, 490, 96);
 
         var lblPlcIp = CreateLabel("IPアドレス:", 8, 24, 82);
         txtPlcIp = new TextBox
@@ -243,14 +274,14 @@ public class SettingsForm : Form
         // ── 保存 / キャンセルボタン ──────────────────────────────
         var btnSave = new Button
         {
-            Left = 300, Top = 694, Width = 96, Height = 32,
+            Left = 300, Top = 730, Width = 96, Height = 32,
             Text = "保存", Font = new Font("Meiryo UI", 9, FontStyle.Bold),
             BackColor = Color.SeaGreen, ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
         };
         var btnCancel = new Button
         {
-            Left = 404, Top = 694, Width = 96, Height = 32,
+            Left = 404, Top = 730, Width = 96, Height = 32,
             Text = "キャンセル", Font = new Font("Meiryo UI", 9),
             BackColor = Color.DimGray, ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
@@ -269,6 +300,11 @@ public class SettingsForm : Form
         txtOnnxPath.Enabled   = onnxSelected;
         btnBrowseOnnx.Enabled = onnxSelected;
         txtOnnxPath.BackColor = onnxSelected ? Color.White : Color.FromArgb(235, 235, 235);
+
+        // モデル種別・異常検知閾値は ONNX モードのときのみ有効
+        lblModelType.Enabled        = onnxSelected;
+        cmbModelType.Enabled        = onnxSelected;
+        nudAnomalyThreshold.Enabled = onnxSelected;
     }
 
     private void BtnSave_Click(object? sender, EventArgs e)
@@ -317,6 +353,7 @@ public class SettingsForm : Form
             ApiUrl            = url,
             ApiTimeoutSeconds = (int)nudApiTimeout.Value,
             NgThreshold       = (double)nudNgThreshold.Value,
+            AnomalyThreshold  = (double)nudAnomalyThreshold.Value,
             InferenceEnabled  = chkInferenceEnabled.Checked,
             CsvDirectory      = txtCsvDir.Text.Trim(),
             NgImageDirectory  = txtNgDir.Text.Trim(),
@@ -332,6 +369,7 @@ public class SettingsForm : Form
             },
             InferenceMode     = rbOnnx.Checked ? "ONNX" : "FastAPI",
             OnnxModelPath     = txtOnnxPath.Text.Trim(),
+            OnnxModelType     = cmbModelType.SelectedItem?.ToString() ?? "Auto",
             PlcSettings       = new PlcSettings
             {
                 IpAddress         = txtPlcIp.Text.Trim(),
