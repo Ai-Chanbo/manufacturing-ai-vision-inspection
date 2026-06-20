@@ -141,16 +141,22 @@ public sealed class AnomalyInspectionService : IInspectionEngine
             }
         }
 
-        // anomaly_map（取得確認。段階2では統計のみ使用）
+        // anomaly_map（ヒートマップ表示用に配列・サイズ・最大値を取得）
+        float[]? anomalyMap = null;
+        int mapW = 0, mapH = 0;
         double mapMax = double.NaN;
         if (_mapOutput != null)
         {
             var mapVal = outputs.FirstOrDefault(o => o.Name == _mapOutput);
             if (mapVal != null)
             {
+                var mapTensor = mapVal.AsTensor<float>();
+                var dims      = mapTensor.Dimensions;        // 通常 [1,1,H,W]
+                if (dims.Length >= 2) { mapH = dims[dims.Length - 2]; mapW = dims[dims.Length - 1]; }
+                anomalyMap = mapVal.AsEnumerable<float>().ToArray();
+
                 float max = float.NegativeInfinity;
-                foreach (var v in mapVal.AsEnumerable<float>())
-                    if (v > max) max = v;
+                foreach (var v in anomalyMap) if (v > max) max = v;
                 mapMax = max;
             }
         }
@@ -170,6 +176,12 @@ public sealed class AnomalyInspectionService : IInspectionEngine
                             : $"異常は検出されませんでした{labelInfo}{mapInfo}",
             InferenceMs = Math.Round(sw.Elapsed.TotalMilliseconds, 2),
             // Top5Candidates は異常検知では生成しない（空のまま）
+
+            // ヒートマップ表示用
+            AnomalyMap       = anomalyMap,
+            AnomalyMapWidth  = mapW,
+            AnomalyMapHeight = mapH,
+            AnomalyMapMax    = double.IsNaN(mapMax) ? 0 : Math.Round(mapMax, 6),
         };
     }
 

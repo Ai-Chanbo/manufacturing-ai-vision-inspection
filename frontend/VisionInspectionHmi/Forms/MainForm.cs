@@ -56,6 +56,11 @@ public class MainForm : Form
     private CameraService? _cameraService;
     private Bitmap?        _lastCameraFrame;
     private string?        _selectedImagePath;
+
+    // 異常検知ヒートマップ表示用（最後の検査結果と対象画像を保持し、トグルで再描画）
+    private CheckBox          chkHeatmap = null!;
+    private InspectionResult? _lastAnomalyResult;
+    private string?           _lastInspectedImagePath;
     private readonly List<InspectionHistory> _histories = [];
     private int _totalCount;
     private int _okCount;
@@ -413,6 +418,20 @@ public class MainForm : Form
         Controls.Add(leftPanel);
         Controls.Add(_statusStrip);
 
+        // ヒートマップ表示トグル（異常検知結果がある場合のみ表示。picImage 左上に重ねる）
+        chkHeatmap = new CheckBox
+        {
+            Text      = "ヒートマップ",
+            Left = 6, Top = 6, Width = 110, Height = 22,
+            Font      = new Font("Meiryo UI", 8, FontStyle.Bold),
+            BackColor = Color.White,
+            ForeColor = Color.FromArgb(40, 40, 80),
+            Checked   = true,
+            Visible   = false,
+        };
+        chkHeatmap.CheckedChanged += (_, _) => RenderHeatmapOrOriginal();
+        picImage.Controls.Add(chkHeatmap);
+
         // --- イベント登録 ---
         btnSelectImage.Click  += BtnSelectImage_Click;
         btnInspect.Click      += BtnInspect_Click;
@@ -442,6 +461,9 @@ public class MainForm : Form
 
         _selectedImagePath = dlg.FileName;
         lblImagePath.Text  = Path.GetFileName(_selectedImagePath);
+        // 新規画像選択でヒートマップ表示をリセット
+        _lastAnomalyResult = null;
+        chkHeatmap.Visible = false;
         try
         {
             picImage.Image?.Dispose();
@@ -526,6 +548,12 @@ public class MainForm : Form
                 inferenceMs = result.InferenceMs > 0 ? result.InferenceMs : sw.ElapsedMilliseconds;
             }
             ShowResult(result, inferenceMs);
+
+            // 異常検知ヒートマップ表示の更新（分類・FastAPI では AnomalyMap=null のため無効）
+            _lastAnomalyResult      = result;
+            _lastInspectedImagePath = _selectedImagePath;
+            UpdateHeatmapDisplay();
+
             AppLogger.LogInspection(fileName, result.Result, result.Score,
                                     result.DefectType, inferenceMs,
                                     useOnnx ? "ONNX" : "FastAPI");
@@ -765,6 +793,9 @@ public class MainForm : Form
             btnSelectImage.Enabled = false;
             lblImagePath.Text      = "カメラ映像";
             _selectedImagePath     = null;
+            // カメラ稼働中はヒートマップ表示を無効化
+            _lastAnomalyResult = null;
+            chkHeatmap.Visible = false;
 
             AppLogger.LogCameraStarted(cameraIndex);
             ssCamera.Text      = $"CAMERA: 起動中 (idx={cameraIndex})";
@@ -1104,6 +1135,59 @@ public class MainForm : Form
 
         // Top5候補表示
         UpdateTop5Grid(r.Top5Candidates);
+    }
+
+    // ── 異常検知ヒートマップ表示 ──────────────────────────────────────
+
+    /// <summary>
+    /// 直近の検査結果に anomaly_map がある場合のみヒートマップ表示を有効化する。
+    /// カメラ稼働中・分類/FastAPI 結果では無効（トグルを隠し元画像のまま）。
+    /// </summary>
+    private void UpdateHeatmapDisplay()
+    {
+        bool hasMap = _lastAnomalyResult?.AnomalyMap != null
+                      && _cameraService?.IsRunning != true
+                      && !string.IsNullOrEmpty(_lastInspectedImagePath)
+                      && File.Exists(_lastInspectedImagePath);
+
+        chkHeatmap.Visible = hasMap;
+        if (hasMap) RenderHeatmapOrOriginal();
+    }
+
+    /// <summary>トグル状態に応じて picImage にヒートマップ重畳 / 元画像を表示する。</summary>
+    private void RenderHeatmapOrOriginal()
+    {
+        var r = _lastAnomalyResult;
+        if (r?.AnomalyMap == null || _lastInspectedImagePath == null
+            || !File.Exists(_lastInspectedImagePath)) return;
+
+        try
+        {
+            var prev = picImage.Image;
+            if (chkHeatmap.Checked)
+            {
+                using var baseImg = LoadImageCopy(_lastInspectedImagePath);
+                picImage.Image = AnomalyHeatmapRenderer.Overlay(
+                    baseImg, r.AnomalyMap, r.AnomalyMapWidth, r.AnomalyMapHeight, 0.5f);
+            }
+            else
+            {
+                picImage.Image = LoadImageCopy(_lastInspectedImagePath);
+            }
+            // カメラフレームは別管理。それ以外の旧 Image のみ破棄。
+            if (prev != _lastCameraFrame) prev?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("ヒートマップ描画に失敗しました", ex);
+        }
+    }
+
+    /// <summary>ファイルロックを残さない画像読み込み（コピーを返す）。</summary>
+    private static Image LoadImageCopy(string path)
+    {
+        using var tmp = new Bitmap(path);
+        return new Bitmap(tmp);
     }
 
     private void ClearResult()
