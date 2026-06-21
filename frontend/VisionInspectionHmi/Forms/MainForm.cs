@@ -469,24 +469,48 @@ public class MainForm : Form
 
     private void BtnSelectImage_Click(object? sender, EventArgs e)
     {
-        using var dlg = new OpenFileDialog
-        {
-            Title  = "検査画像を選択してください",
-            Filter = "画像ファイル|*.jpg;*.jpeg;*.png;*.bmp|すべてのファイル|*.*",
-        };
-        if (dlg.ShowDialog(this) != DialogResult.OK) return;
-
-        _selectedImagePath = dlg.FileName;
-        lblImagePath.Text  = Path.GetFileName(_selectedImagePath);
-        // 新規画像選択でヒートマップ表示をリセット
-        _lastAnomalyResult = null;
-        chkHeatmap.Visible = false;
+        // ダイアログ表示前に重い処理は行わない。
+        // 前回パスのフォルダが有効なときだけ InitialDirectory に使う（壊れていても固まらない）。
+        string? initialDir = null;
         try
         {
-            picImage.Image?.Dispose();
-            picImage.Image = Image.FromFile(_selectedImagePath);
+            var prevDir = Path.GetDirectoryName(_selectedImagePath);
+            if (!string.IsNullOrEmpty(prevDir) && Directory.Exists(prevDir))
+                initialDir = prevDir;
         }
-        catch (Exception ex) { ShowError($"画像の表示に失敗しました: {ex.Message}"); }
+        catch { initialDir = null; }
+
+        string selectedPath;
+        using (var dlg = new OpenFileDialog
+        {
+            Title            = "検査画像を選択してください",
+            Filter           = "Image Files|*.jpg;*.jpeg;*.png;*.bmp|All Files|*.*",
+            Multiselect      = false,
+            RestoreDirectory = true,
+        })
+        {
+            if (initialDir != null) dlg.InitialDirectory = initialDir;
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+            selectedPath = dlg.FileName;
+        }
+
+        // ダイアログで選択されたファイルだけを、ファイルロックを残さず読み込む。
+        try
+        {
+            var image = LoadImageCopy(selectedPath);
+            picImage.Image?.Dispose();
+            picImage.Image     = image;
+            _selectedImagePath = selectedPath;
+            lblImagePath.Text  = Path.GetFileName(selectedPath);
+            // 新規画像選択でヒートマップ表示をリセット
+            _lastAnomalyResult = null;
+            chkHeatmap.Visible = false;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("画像の読み込みに失敗しました", ex);
+            ShowError($"画像の表示に失敗しました: {ex.Message}");
+        }
     }
 
     private async void BtnInspect_Click(object? sender, EventArgs e)
@@ -1204,10 +1228,14 @@ public class MainForm : Form
         }
     }
 
-    /// <summary>ファイルロックを残さない画像読み込み（コピーを返す）。</summary>
+    /// <summary>
+    /// ファイルロックを残さない画像読み込み。FileStream 経由で読み、独立した Bitmap を返す。
+    /// （Image.FromFile / new Bitmap(path) は元ファイルをロックし続けるため使用しない）
+    /// </summary>
     private static Image LoadImageCopy(string path)
     {
-        using var tmp = new Bitmap(path);
+        using var fs  = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var tmp = Image.FromStream(fs);
         return new Bitmap(tmp);
     }
 
