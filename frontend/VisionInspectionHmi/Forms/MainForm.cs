@@ -39,6 +39,7 @@ public class MainForm : Form
 
     // --- 右パネルコントロール ---
     private DataGridView dgvHistory  = null!;
+    private Label lblHistTitle  = null!;
     private Label lblStatTotal = null!;
     private Label lblStatOk    = null!;
     private Label lblStatNg    = null!;
@@ -118,171 +119,172 @@ public class MainForm : Form
     {
         AutoScaleMode  = AutoScaleMode.None;
         Text           = "製造業向け 外観検査画像解析システム";
-        Size           = new Size(1180, 865);
-        MinimumSize    = new Size(1180, 855);
+        Size           = new Size(1600, 1000);
+        MinimumSize    = new Size(1400, 900);
         StartPosition  = FormStartPosition.CenterScreen;
-        BackColor      = Color.FromArgb(240, 240, 245);
+        BackColor      = Color.FromArgb(238, 240, 245);
+
+        var groupFont = new Font("Meiryo UI", 11, FontStyle.Bold);
 
         // ══════════════════════════════════════════════════════════
-        //  左パネル（画像・ボタン・検査結果）
+        //  左パネル（画像・操作ボタン・検査結果・PLC）
         // ══════════════════════════════════════════════════════════
-        var leftPanel = new Panel { Dock = DockStyle.Left, Width = 440 };
+        var leftPanel = new Panel { Dock = DockStyle.Left, Width = 600, Padding = new Padding(10) };
 
+        // ── 画像表示エリア（Fill で残りを占有）──────────────────
+        var imageGroup = new GroupBox
+        {
+            Text = "画像", Dock = DockStyle.Fill, Font = groupFont,
+            Padding = new Padding(10, 28, 10, 10),
+        };
         picImage = new PictureBox
         {
+            Dock        = DockStyle.Fill,
             SizeMode    = PictureBoxSizeMode.Zoom,
             BorderStyle = BorderStyle.FixedSingle,
             BackColor   = Color.White,
-            Left = 8, Top = 8, Width = 422, Height = 342,
         };
-
         lblImagePath = new Label
         {
-            Text        = "画像が選択されていません",
-            Left = 8, Top = 354, Width = 422, Height = 17,
-            ForeColor   = Color.Gray,
-            Font        = new Font("Meiryo UI", 7.5f),
+            Text         = "画像が選択されていません",
+            Dock         = DockStyle.Bottom, Height = 22,
+            ForeColor    = Color.Gray,
+            Font         = new Font("Meiryo UI", 9),
             AutoEllipsis = true,
+            TextAlign    = ContentAlignment.MiddleLeft,
         };
+        imageGroup.Controls.Add(picImage);
+        imageGroup.Controls.Add(lblImagePath);
 
-        // ボタン行1: 画像選択 / 検査開始
-        btnSelectImage = CreateButton("画像を選択", 8,   375, Color.SteelBlue);
-        btnInspect     = CreateButton("検査開始",   222, 375, Color.SeaGreen);
-        // ボタン行2: カメラ開始 / カメラ停止
-        btnCameraStart = CreateButton("カメラ開始", 8,   415, Color.CadetBlue);
-        btnCameraStop  = CreateButton("カメラ停止", 222, 415, Color.DimGray);
-        btnCameraStop.Enabled = false;
-        foreach (var b in new[] { btnSelectImage, btnInspect, btnCameraStart, btnCameraStop })
-            b.Width = 206;
-
-        // ボタン行3: API確認 / CSVフォルダ / 設定
-        btnCheckApi  = CreateButton("API接続確認", 8,   455, Color.DimGray);
-        btnExportCsv = CreateButton("CSVを開く",  152, 455, Color.DarkSlateGray);
-        btnSettings  = CreateButton("設定",        296, 455, Color.SlateBlue);
-        foreach (var b in new[] { btnCheckApi, btnExportCsv, btnSettings })
-            b.Width = 140;
-
-        lblApiStatus = new Label
+        // ヒートマップ表示トグル（picImage 左上に重ねる）
+        chkHeatmap = new CheckBox
         {
-            Text      = "API: 未確認",
-            Left = 8, Top = 495, Width = 200, Height = 22,
-            Font      = new Font("Meiryo UI", 10, FontStyle.Bold),
-            ForeColor = Color.Gray,
-            AutoEllipsis = true,
+            Text      = "ヒートマップ",
+            Left = 6, Top = 6, Width = 130, Height = 24,
+            Font      = new Font("Meiryo UI", 9, FontStyle.Bold),
+            BackColor = Color.White,
+            ForeColor = Color.FromArgb(40, 40, 80),
+            Checked   = true, Visible = false,
         };
+        chkHeatmap.CheckedChanged += (_, _) => RenderHeatmapOrOriginal();
+        picImage.Controls.Add(chkHeatmap);
 
-        // フォルダ検査（バッチ評価）ボタン — API ステータス行の右側に配置
-        btnFolderInspect = CreateButton("フォルダ検査", 214, 491, Color.Teal);
-        btnFolderInspect.Width  = 216;
-        btnFolderInspect.Height = 28;
+        // ── 操作ボタン（2列 × 4行 グリッド）──────────────────────
+        btnSelectImage   = CreateGridButton("画像を選択",   Color.RoyalBlue);
+        btnInspect       = CreateGridButton("▶ 検査開始",   Color.SeaGreen);
+        btnCameraStart   = CreateGridButton("カメラ開始",   Color.SteelBlue);
+        btnCameraStop    = CreateGridButton("■ カメラ停止", Color.DimGray);
+        btnCameraStop.Enabled = false;
+        btnExportCsv     = CreateGridButton("CSVを開く",    Color.DarkSlateGray);
+        btnSettings      = CreateGridButton("設定",         Color.SlateBlue);
+        btnCheckApi      = CreateGridButton("API接続確認",  Color.Teal);
+        btnFolderInspect = CreateGridButton("フォルダ検査", Color.Teal);
+
+        var buttonGrid = new TableLayoutPanel
+        {
+            Dock = DockStyle.Bottom, Height = 236,
+            ColumnCount = 2, RowCount = 4, Padding = new Padding(0, 6, 0, 6),
+        };
+        buttonGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        buttonGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        for (int i = 0; i < 4; i++) buttonGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 25));
+        buttonGrid.Controls.Add(btnSelectImage,   0, 0);
+        buttonGrid.Controls.Add(btnInspect,       1, 0);
+        buttonGrid.Controls.Add(btnCameraStart,   0, 1);
+        buttonGrid.Controls.Add(btnCameraStop,    1, 1);
+        buttonGrid.Controls.Add(btnExportCsv,     0, 2);
+        buttonGrid.Controls.Add(btnSettings,      1, 2);
+        buttonGrid.Controls.Add(btnCheckApi,      0, 3);
+        buttonGrid.Controls.Add(btnFolderInspect, 1, 3);
 
         // ── 検査結果グループ ──────────────────────────────────────
         var resultGroup = new GroupBox
         {
-            Text    = "検査結果",
-            Left = 8, Top = 521, Width = 422, Height = 210,
-            Font    = new Font("Meiryo UI", 9),
-            Padding = new Padding(6, 24, 6, 6),
+            Text = "検査結果", Dock = DockStyle.Bottom, Height = 196,
+            Font = groupFont, Padding = new Padding(10, 28, 10, 10),
         };
-
-        _resultBanner = new Panel
-        {
-            Left = 6, Top = 28, Width = 406, Height = 54,
-            BackColor = Color.FromArgb(200, 200, 200),
-        };
+        _resultBanner = new Panel { Dock = DockStyle.Top, Height = 60, BackColor = Color.FromArgb(180, 180, 185) };
         lblResult = new Label
         {
-            Text      = "判定: ---",
-            Dock      = DockStyle.Fill,
+            Text      = "判定: ---", Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleCenter,
-            Font      = new Font("Meiryo UI", 20, FontStyle.Bold),
+            Font      = new Font("Meiryo UI", 22, FontStyle.Bold),
             ForeColor = Color.White,
-            AutoSize  = false,
         };
         _resultBanner.Controls.Add(lblResult);
 
-        lblScore  = CreateResultLabel("確信度: ---",    6,  86, 11, FontStyle.Regular);
-        lblDefect = CreateResultLabel("推論クラス: ---", 6, 118, 11, FontStyle.Regular);
-        foreach (var l in new[] { lblScore, lblDefect }) { l.Width = 406; l.Height = 28; }
+        var resultDetails = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8, 8, 8, 4) };
+        lblScore       = new Label { Text = "確信度: ---",    Dock = DockStyle.Top, Height = 30, Font = new Font("Meiryo UI", 12), AutoEllipsis = true };
+        lblDefect      = new Label { Text = "推論クラス: ---", Dock = DockStyle.Top, Height = 30, Font = new Font("Meiryo UI", 12), AutoEllipsis = true };
+        lblInferenceMs = new Label { Text = "推論時間: ---",  Dock = DockStyle.Top, Height = 26, Font = new Font("Meiryo UI", 11), ForeColor = Color.FromArgb(80, 80, 100), AutoEllipsis = true };
+        resultDetails.Controls.Add(lblInferenceMs);
+        resultDetails.Controls.Add(lblDefect);
+        resultDetails.Controls.Add(lblScore);
 
-        lblInferenceMs = CreateResultLabel("推論時間: ---", 6, 150, 10, FontStyle.Regular);
-        lblInferenceMs.Width     = 406;
-        lblInferenceMs.Height    = 26;
-        lblInferenceMs.ForeColor = Color.FromArgb(80, 80, 100);
+        resultGroup.Controls.Add(resultDetails);
+        resultGroup.Controls.Add(_resultBanner);
 
-        resultGroup.Controls.AddRange(
-            [_resultBanner, lblScore, lblDefect, lblInferenceMs]);
-
-        // ── PLC連携パネル ────────────────────────────────────────
+        // ── PLC連携グループ ──────────────────────────────────────
         var plcGroup = new GroupBox
         {
-            Text    = "PLC連携（Modbus TCP）",
-            Left = 8, Top = 737, Width = 422, Height = 80,
-            Font    = new Font("Meiryo UI", 9),
-            Padding = new Padding(6, 20, 6, 6),
+            Text = "PLC連携（Modbus TCP）", Dock = DockStyle.Bottom, Height = 112,
+            Font = groupFont, Padding = new Padding(10, 26, 10, 8),
         };
-
-        btnPlcConnect    = CreateButton("PLC接続",   8,   24, Color.SteelBlue);
-        btnPlcDisconnect = CreateButton("PLC切断",   110, 24, Color.DimGray);
-        btnPlcMonitor    = CreateButton("▶ 監視開始", 212, 24, Color.SeaGreen);
-        btnPlcTestFire   = CreateButton("テスト発火", 336, 24, Color.DarkOrange);
-        foreach (var b in new[] { btnPlcConnect, btnPlcDisconnect, btnPlcMonitor, btnPlcTestFire })
-        {
-            b.Width  = 98;
-            b.Height = 28;
-            b.Font   = new Font("Meiryo UI", 8, FontStyle.Bold);
-        }
-
+        btnPlcConnect    = CreatePlcButton("PLC接続",    Color.SteelBlue);
+        btnPlcDisconnect = CreatePlcButton("PLC切断",    Color.DimGray);
+        btnPlcMonitor    = CreatePlcButton("▶ 監視開始", Color.SeaGreen);
+        btnPlcTestFire   = CreatePlcButton("テスト発火", Color.DarkOrange);
+        var plcButtonRow = new TableLayoutPanel { Dock = DockStyle.Top, Height = 42, ColumnCount = 4, RowCount = 1 };
+        for (int i = 0; i < 4; i++) plcButtonRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+        plcButtonRow.Controls.Add(btnPlcConnect,    0, 0);
+        plcButtonRow.Controls.Add(btnPlcDisconnect, 1, 0);
+        plcButtonRow.Controls.Add(btnPlcMonitor,    2, 0);
+        plcButtonRow.Controls.Add(btnPlcTestFire,   3, 0);
+        var plcStatusRow = new Panel { Dock = DockStyle.Top, Height = 26 };
         lblPlcStatus = new Label
         {
-            Text      = "状態: 未接続",
-            Left = 8, Top = 56, Width = 200, Height = 18,
-            Font      = new Font("Meiryo UI", 8),
-            ForeColor = Color.Gray,
+            Text = "状態: 未接続", Left = 4, Top = 4, Width = 280, Height = 20,
+            Font = new Font("Meiryo UI", 9), ForeColor = Color.Gray,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left,
         };
         lblPlcLastTrigger = new Label
         {
-            Text      = "最終トリガ: --",
-            Left = 214, Top = 56, Width = 200, Height = 18,
-            Font      = new Font("Meiryo UI", 8),
-            ForeColor = Color.DimGray,
+            Text = "最終トリガ: --", Left = 296, Top = 4, Width = 270, Height = 20,
+            Font = new Font("Meiryo UI", 9), ForeColor = Color.DimGray,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left,
         };
+        plcStatusRow.Controls.Add(lblPlcStatus);
+        plcStatusRow.Controls.Add(lblPlcLastTrigger);
+        plcGroup.Controls.Add(plcStatusRow);
+        plcGroup.Controls.Add(plcButtonRow);
 
-        plcGroup.Controls.AddRange([
-            btnPlcConnect, btnPlcDisconnect, btnPlcMonitor, btnPlcTestFire,
-            lblPlcStatus, lblPlcLastTrigger,
-        ]);
+        // 旧 API ステータスラベルは新レイアウトでは非表示（状態はステータスバーで表示）。
+        // ApplySettings / BtnCheckApi_Click が参照するため、生成のみ保持する。
+        lblApiStatus = new Label { Text = "API: 未確認", Visible = false };
 
-        leftPanel.Controls.AddRange([picImage, lblImagePath,
-            btnSelectImage, btnInspect, btnCameraStart, btnCameraStop,
-            btnCheckApi, btnExportCsv, btnSettings,
-            lblApiStatus, btnFolderInspect, resultGroup, plcGroup]);
+        // 左パネル組み立て（Fill を最初に追加 → 残りを占有。Bottom は最後追加が最下部）
+        leftPanel.Controls.Add(imageGroup);
+        leftPanel.Controls.Add(buttonGrid);
+        leftPanel.Controls.Add(resultGroup);
+        leftPanel.Controls.Add(plcGroup);
 
         // ══════════════════════════════════════════════════════════
-        //  右パネル（履歴・統計・モデル情報）
+        //  右パネル（サマリ・モデル情報・Top5・検査履歴）
         // ══════════════════════════════════════════════════════════
-        var rightPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8) };
+        var rightPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(10) };
 
-        var histLabel = new Label
-        {
-            Text      = "検査履歴",
-            Dock      = DockStyle.Top,
-            Height    = 28,
-            Font      = new Font("Meiryo UI", 10, FontStyle.Bold),
-            TextAlign = ContentAlignment.MiddleLeft,
-        };
-
+        // ── 検査履歴一覧（Fill）──────────────────────────────────
         dgvHistory = new DataGridView
         {
-            Dock                    = DockStyle.Fill,
-            ReadOnly                = true,
-            AutoSizeColumnsMode     = DataGridViewAutoSizeColumnsMode.Fill,
-            ScrollBars              = ScrollBars.Vertical,
-            RowHeadersVisible       = false,
-            AllowUserToAddRows      = false,
-            BackgroundColor         = Color.White,
-            BorderStyle             = BorderStyle.None,
-            Font                    = new Font("Meiryo UI", 8),
+            Dock                = DockStyle.Fill,
+            ReadOnly            = true,
+            AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+            ScrollBars          = ScrollBars.Vertical,
+            RowHeadersVisible   = false,
+            AllowUserToAddRows  = false,
+            BackgroundColor     = Color.White,
+            BorderStyle         = BorderStyle.FixedSingle,
+            Font                = new Font("Meiryo UI", 9.5f),
         };
         var hColAt     = new DataGridViewTextBoxColumn { Name = "InspectedAt", HeaderText = "検査日時"     };
         var hColResult = new DataGridViewTextBoxColumn { Name = "Result",      HeaderText = "判定"         };
@@ -290,119 +292,117 @@ public class MainForm : Form
         var hColDefect = new DataGridViewTextBoxColumn { Name = "DefectType",  HeaderText = "推論クラス"   };
         var hColMs     = new DataGridViewTextBoxColumn { Name = "InferenceMs", HeaderText = "推論時間(ms)" };
         dgvHistory.Columns.AddRange([hColAt, hColResult, hColScore, hColDefect, hColMs]);
-        hColAt.AutoSizeMode     = DataGridViewAutoSizeColumnMode.None; hColAt.Width     = 150;
-        hColResult.AutoSizeMode = DataGridViewAutoSizeColumnMode.None; hColResult.Width = 60;
-        hColScore.AutoSizeMode  = DataGridViewAutoSizeColumnMode.None; hColScore.Width  = 80;
-        hColDefect.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill; hColDefect.FillWeight = 100; hColDefect.MinimumWidth = 160;
-        hColMs.AutoSizeMode     = DataGridViewAutoSizeColumnMode.None; hColMs.Width     = 140;
-        dgvHistory.RowTemplate.Height = 24;
+        hColAt.AutoSizeMode     = DataGridViewAutoSizeColumnMode.None; hColAt.Width     = 175;
+        hColResult.AutoSizeMode = DataGridViewAutoSizeColumnMode.None; hColResult.Width = 70;
+        hColScore.AutoSizeMode  = DataGridViewAutoSizeColumnMode.None; hColScore.Width  = 95;
+        hColDefect.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill; hColDefect.FillWeight = 100; hColDefect.MinimumWidth = 190;
+        hColMs.AutoSizeMode     = DataGridViewAutoSizeColumnMode.None; hColMs.Width     = 150;
+        dgvHistory.RowTemplate.Height = 30;
         dgvHistory.EnableHeadersVisualStyles               = false;
         dgvHistory.ColumnHeadersHeightSizeMode             = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
-        dgvHistory.ColumnHeadersHeight                     = 30;
+        dgvHistory.ColumnHeadersHeight                     = 36;
+        dgvHistory.ColumnHeadersDefaultCellStyle.Font      = new Font("Meiryo UI", 9.5f, FontStyle.Bold);
         dgvHistory.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
-        dgvHistory.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(225, 230, 245);
-        dgvHistory.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(50, 50, 80);
+        dgvHistory.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(60, 80, 140);
+        dgvHistory.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+        dgvHistory.ColumnHeadersDefaultCellStyle.Padding   = new Padding(4, 0, 0, 0);
 
-        // 統計パネル
-        var statsPanel = new FlowLayoutPanel
+        lblHistTitle = new Label
         {
-            Dock          = DockStyle.Top,
-            Height        = 40,
-            BackColor     = Color.FromArgb(225, 225, 238),
-            FlowDirection = FlowDirection.LeftToRight,
-            Padding       = new Padding(8, 0, 8, 0),
-            WrapContents  = false,
+            Text = "検査履歴一覧", Dock = DockStyle.Top, Height = 30,
+            Font = groupFont, ForeColor = Color.FromArgb(40, 50, 90),
+            TextAlign = ContentAlignment.MiddleLeft,
         };
-        var statFont   = new Font("Meiryo UI", 10, FontStyle.Bold);
-        var statMargin = new Padding(0, 10, 24, 0);
-        lblStatTotal = new Label { Text = "検査数: 0", AutoSize = true, Font = statFont, ForeColor = Color.FromArgb(50, 50, 70), Margin = statMargin };
-        lblStatOk    = new Label { Text = "OK: 0",     AutoSize = true, Font = statFont, ForeColor = Color.SeaGreen,             Margin = statMargin };
-        lblStatNg    = new Label { Text = "NG: 0",     AutoSize = true, Font = statFont, ForeColor = Color.Crimson,              Margin = statMargin };
-        lblStatRate  = new Label { Text = "OK率: ---", AutoSize = true, Font = statFont, ForeColor = Color.FromArgb(50, 50, 70), Margin = statMargin };
-        statsPanel.Controls.AddRange([lblStatTotal, lblStatOk, lblStatNg, lblStatRate]);
 
-        // モデル情報パネル ────────────────────────────────────────
-        var modelInfoPanel = new Panel
-        {
-            Dock      = DockStyle.Top,
-            Height    = 100,
-            BackColor = Color.FromArgb(232, 238, 250),
-        };
-        var infoTitleLbl = new Label
-        {
-            Text      = "推論エンジン情報",
-            Left = 8, Top = 2, Width = 200, Height = 16,
-            Font      = new Font("Meiryo UI", 7.5f, FontStyle.Bold),
-            ForeColor = Color.FromArgb(70, 80, 130),
-        };
-        var infoFont = new Font("Meiryo UI", 8.5f);
-        lblModelMode   = new Label { Text = "推論モード: ---",   Left = 8,   Top = 20, Width = 400, Height = 22, Font = infoFont, AutoEllipsis = true };
-        lblModelStatus = new Label { Text = "読込状態: ---",     Left = 416, Top = 20, Width = 220, Height = 22, Font = infoFont };
-        lblModelName   = new Label { Text = "モデル名: ---",     Left = 8,   Top = 44, Width = 628, Height = 22, Font = infoFont, AutoEllipsis = true };
-        lblModelInput  = new Label { Text = "入力サイズ: ---",   Left = 8,   Top = 68, Width = 360, Height = 22, Font = infoFont };
-        modelInfoPanel.Controls.AddRange(
-            [infoTitleLbl, lblModelMode, lblModelStatus, lblModelName, lblModelInput]);
-
-        // ── Top5推論候補パネル ──────────────────────────────────────
-        var top5Panel = new Panel
-        {
-            Dock      = DockStyle.Top,
-            Height    = 168,
-            BackColor = Color.White,
-        };
-        var top5TitleLbl = new Label
-        {
-            Text      = "Top5 推論候補",
-            Dock      = DockStyle.Top,
-            Height    = 24,
-            Font      = new Font("Meiryo UI", 7.5f, FontStyle.Bold),
-            ForeColor = Color.FromArgb(70, 80, 130),
-            Padding   = new Padding(4, 4, 0, 0),
-            BackColor = Color.FromArgb(232, 238, 250),
-        };
+        // ── Top5 推論候補 ─────────────────────────────────────────
         _dgvTop5 = new DataGridView
         {
-            Dock                = DockStyle.Fill,
-            ReadOnly            = true,
-            AllowUserToAddRows  = false,
-            RowHeadersVisible   = false,
+            Dock                 = DockStyle.Fill,
+            ReadOnly             = true,
+            AllowUserToAddRows   = false,
+            RowHeadersVisible    = false,
             ColumnHeadersVisible = true,
-            AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-            ScrollBars          = ScrollBars.Vertical,
-            BackgroundColor     = Color.White,
-            BorderStyle         = BorderStyle.None,
-            Font                = new Font("Meiryo UI", 8f),
-            SelectionMode       = DataGridViewSelectionMode.FullRowSelect,
-            MultiSelect         = false,
-            CellBorderStyle     = DataGridViewCellBorderStyle.SingleHorizontal,
-            GridColor           = Color.FromArgb(220, 220, 230),
+            AutoSizeColumnsMode  = DataGridViewAutoSizeColumnsMode.Fill,
+            ScrollBars           = ScrollBars.Vertical,
+            BackgroundColor      = Color.White,
+            BorderStyle          = BorderStyle.FixedSingle,
+            Font                 = new Font("Meiryo UI", 9.5f),
+            SelectionMode        = DataGridViewSelectionMode.FullRowSelect,
+            MultiSelect          = false,
+            CellBorderStyle      = DataGridViewCellBorderStyle.SingleHorizontal,
+            GridColor            = Color.FromArgb(220, 220, 230),
         };
         var t5ColRank  = new DataGridViewTextBoxColumn { HeaderText = "順位",    DefaultCellStyle = { Alignment = DataGridViewContentAlignment.MiddleCenter } };
         var t5ColLabel = new DataGridViewTextBoxColumn { HeaderText = "クラス名" };
         var t5ColConf  = new DataGridViewTextBoxColumn { HeaderText = "確信度",  DefaultCellStyle = { Alignment = DataGridViewContentAlignment.MiddleRight  } };
         _dgvTop5.Columns.AddRange([t5ColRank, t5ColLabel, t5ColConf]);
-        t5ColRank.AutoSizeMode  = DataGridViewAutoSizeColumnMode.None; t5ColRank.Width  = 50;
+        t5ColRank.AutoSizeMode  = DataGridViewAutoSizeColumnMode.None; t5ColRank.Width  = 60;
         t5ColLabel.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
-        t5ColConf.AutoSizeMode  = DataGridViewAutoSizeColumnMode.None; t5ColConf.Width  = 110;
-        _dgvTop5.RowTemplate.Height = 21;
+        t5ColConf.AutoSizeMode  = DataGridViewAutoSizeColumnMode.None; t5ColConf.Width  = 130;
+        _dgvTop5.RowTemplate.Height = 26;
         _dgvTop5.EnableHeadersVisualStyles               = false;
         _dgvTop5.ColumnHeadersHeightSizeMode             = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
-        _dgvTop5.ColumnHeadersHeight                     = 30;
-        _dgvTop5.ColumnHeadersDefaultCellStyle.Font      = new Font("Meiryo UI", 7.5f, FontStyle.Bold);
+        _dgvTop5.ColumnHeadersHeight                     = 32;
+        _dgvTop5.ColumnHeadersDefaultCellStyle.Font      = new Font("Meiryo UI", 9.5f, FontStyle.Bold);
         _dgvTop5.ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
         _dgvTop5.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(225, 230, 245);
         _dgvTop5.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(50, 50, 80);
 
+        var top5Panel = new Panel { Dock = DockStyle.Top, Height = 198, BackColor = Color.White, Padding = new Padding(0, 0, 0, 8) };
+        var top5Title = new Label
+        {
+            Text      = "Top5 推論候補", Dock = DockStyle.Top, Height = 28,
+            Font      = new Font("Meiryo UI", 10, FontStyle.Bold),
+            ForeColor = Color.FromArgb(70, 80, 130),
+            TextAlign = ContentAlignment.MiddleLeft,
+            BackColor = Color.FromArgb(232, 238, 250),
+            Padding   = new Padding(6, 0, 0, 0),
+        };
         top5Panel.Controls.Add(_dgvTop5);
-        top5Panel.Controls.Add(top5TitleLbl);
+        top5Panel.Controls.Add(top5Title);
 
-        // Controls.Add 順序: Fill → 後から追加したTop系が上になる (最後追加=最上部)
-        // Controls.Add 順序: Fill → 後から追加したTop系が上になる（最後追加=最上部）
+        // ── 推論エンジン情報 ──────────────────────────────────────
+        var modelInfoPanel = new Panel { Dock = DockStyle.Top, Height = 100, BackColor = Color.FromArgb(232, 238, 250), Padding = new Padding(8, 4, 8, 6) };
+        var infoFont = new Font("Meiryo UI", 9.5f);
+        lblModelInput  = new Label { Text = "入力サイズ: ---", Dock = DockStyle.Top, Height = 22, Font = infoFont };
+        lblModelName   = new Label { Text = "モデル名: ---",   Dock = DockStyle.Top, Height = 22, Font = infoFont, AutoEllipsis = true };
+        lblModelMode   = new Label { Text = "推論モード: ---", Dock = DockStyle.Top, Height = 22, Font = infoFont, AutoEllipsis = true };
+        var infoTitle  = new Label { Text = "推論エンジン情報", Dock = DockStyle.Top, Height = 24, Font = new Font("Meiryo UI", 10, FontStyle.Bold), ForeColor = Color.FromArgb(70, 80, 130) };
+        // lblModelStatus は読込状態カードの値ラベルとして使用するため、ここでは生成のみ
+        lblModelStatus = new Label();
+        modelInfoPanel.Controls.Add(lblModelInput);
+        modelInfoPanel.Controls.Add(lblModelName);
+        modelInfoPanel.Controls.Add(lblModelMode);
+        modelInfoPanel.Controls.Add(infoTitle);
+
+        // ── 検査履歴サマリー（カード）─────────────────────────────
+        var summaryPanel = new Panel { Dock = DockStyle.Top, Height = 118 };
+        var summaryTitle = new Label
+        {
+            Text = "検査履歴サマリー", Dock = DockStyle.Top, Height = 28,
+            Font = groupFont, ForeColor = Color.FromArgb(40, 50, 90),
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+        lblStatTotal = new Label { Text = "0" };
+        lblStatOk    = new Label { Text = "0" };
+        lblStatNg    = new Label { Text = "0" };
+        lblStatRate  = new Label { Text = "---" };
+        var cards = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, RowCount = 1 };
+        for (int i = 0; i < 5; i++) cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20));
+        cards.Controls.Add(CreateStatCard("検査数",   lblStatTotal,   Color.FromArgb(50, 50, 70)),  0, 0);
+        cards.Controls.Add(CreateStatCard("OK",       lblStatOk,      Color.SeaGreen),               1, 0);
+        cards.Controls.Add(CreateStatCard("NG",       lblStatNg,      Color.Crimson),                2, 0);
+        cards.Controls.Add(CreateStatCard("OK率",     lblStatRate,    Color.FromArgb(40, 90, 190)),  3, 0);
+        cards.Controls.Add(CreateStatCard("読込状態", lblModelStatus, Color.SeaGreen, 14f),          4, 0);
+        summaryPanel.Controls.Add(cards);
+        summaryPanel.Controls.Add(summaryTitle);
+
+        // 組み立て（Fill を最初に追加 → 残りを占有。Top は最後追加が最上部）
         rightPanel.Controls.Add(dgvHistory);
+        rightPanel.Controls.Add(lblHistTitle);
         rightPanel.Controls.Add(top5Panel);
         rightPanel.Controls.Add(modelInfoPanel);
-        rightPanel.Controls.Add(statsPanel);
-        rightPanel.Controls.Add(histLabel);
+        rightPanel.Controls.Add(summaryPanel);
 
         // ステータスバー（フォーム下部）。Spring=true で横幅に応じ4項目を均等配分
         _statusStrip = new StatusStrip { SizingGrip = false };
@@ -778,26 +778,14 @@ public class MainForm : Form
             }
         }
 
-        // ONNXモード時はAPI接続確認を非表示・無効化し、残ボタンを再配置
+        // ボタングリッド Row4 左の「API接続確認」スロットは、ONNX モードでは
+        // 「ONNXモード（API不要）」の無効表示に切り替える（位置はグリッドが管理）。
         if (btnCheckApi != null)
         {
             bool isOnnx = s.InferenceMode == "ONNX";
-            btnCheckApi.Visible = !isOnnx;
-            btnCheckApi.Enabled = !isOnnx;
-            if (isOnnx)
-            {
-                btnExportCsv.Left  = 8;
-                btnExportCsv.Width = 210;
-                btnSettings.Left   = 222;
-                btnSettings.Width  = 210;
-            }
-            else
-            {
-                btnExportCsv.Left  = 152;
-                btnExportCsv.Width = 140;
-                btnSettings.Left   = 296;
-                btnSettings.Width  = 140;
-            }
+            btnCheckApi.Text      = isOnnx ? "ONNXモード（API不要）" : "API接続確認";
+            btnCheckApi.Enabled   = !isOnnx;
+            btnCheckApi.BackColor = isOnnx ? Color.Gray : Color.Teal;
         }
 
         if (lblModelMode != null)
@@ -840,9 +828,9 @@ public class MainForm : Form
             _modelPathTip.SetToolTip(lblModelName,
                 string.IsNullOrWhiteSpace(s.OnnxModelPath) ? "" : s.OnnxModelPath);
             bool loaded = _engine?.IsLoaded ?? false;
-            lblModelStatus.Text      = loaded ? "読込状態: 正常 ✓" : "読込状態: 未読込 ✗";
+            lblModelStatus.Text      = loaded ? "正常 ✓" : "未読込 ✕";
             lblModelStatus.ForeColor = loaded ? Color.SeaGreen : Color.Crimson;
-            ssModel.Text      = loaded ? "MODEL: 正常 ✓" : "MODEL: 未読込 ✗";
+            ssModel.Text      = loaded ? "MODEL: 正常 ✓" : "MODEL: 未読込 ✕";
             ssModel.ForeColor = loaded ? Color.SeaGreen : Color.Crimson;
         }
         else
@@ -851,7 +839,7 @@ public class MainForm : Form
             lblModelName.Text        = "モデル名: (サーバー側)";
             lblModelInput.Text       = "入力サイズ: (サーバー側)";
             _modelPathTip.SetToolTip(lblModelName, "");
-            lblModelStatus.Text      = "読込状態: (サーバー側)";
+            lblModelStatus.Text      = "サーバー側";
             lblModelStatus.ForeColor = Color.Gray;
             ssModel.Text      = "MODEL: FastAPI";
             ssModel.ForeColor = Color.DimGray;
@@ -1209,7 +1197,7 @@ public class MainForm : Form
     {
         bool isOk = r.Result == "OK";
         _resultBanner.BackColor = isOk ? Color.SeaGreen : Color.Crimson;
-        lblResult.Text          = $"判定: {r.Result}";
+        lblResult.Text          = $"{(isOk ? "✓" : "✕")} 判定: {r.Result}";
         lblResult.ForeColor     = Color.White;
         lblScore.Text       = $"確信度: {r.Score * 100:F1}%";
         string inferredClass = !string.IsNullOrEmpty(r.ClassName) ? r.ClassName : r.DefectType;
@@ -1362,19 +1350,22 @@ public class MainForm : Form
         );
         var row   = dgvHistory.Rows[rowIdx];
         bool isOk = h.Result == "OK";
+        // NG 行は薄い赤背景、OK 行は薄い緑背景
         row.DefaultCellStyle.ForeColor = isOk ? Color.SeaGreen : Color.Crimson;
-        row.DefaultCellStyle.BackColor = isOk ? Color.White : Color.FromArgb(255, 240, 240);
+        row.DefaultCellStyle.BackColor = isOk ? Color.FromArgb(240, 250, 242) : Color.FromArgb(255, 238, 238);
         if (!isOk)
-            row.DefaultCellStyle.Font = new Font("Meiryo UI", 8, FontStyle.Bold);
+            row.DefaultCellStyle.Font = new Font("Meiryo UI", 9.5f, FontStyle.Bold);
+
+        lblHistTitle.Text = $"検査履歴一覧（最新 {_histories.Count} 件）";
     }
 
     private void UpdateStats()
     {
         double rate = _totalCount > 0 ? (double)_okCount / _totalCount * 100.0 : 0;
-        lblStatTotal.Text = $"検査数: {_totalCount}";
-        lblStatOk.Text    = $"OK: {_okCount}";
-        lblStatNg.Text    = $"NG: {_ngCount}";
-        lblStatRate.Text  = _totalCount > 0 ? $"OK率: {rate:F1}%" : "OK率: ---";
+        lblStatTotal.Text = _totalCount.ToString();
+        lblStatOk.Text    = _okCount.ToString();
+        lblStatNg.Text    = _ngCount.ToString();
+        lblStatRate.Text  = _totalCount > 0 ? $"{rate:F1}%" : "---";
     }
 
     private static void ShowError(string message) =>
@@ -1384,22 +1375,56 @@ public class MainForm : Form
     //  ファクトリ
     // ══════════════════════════════════════════════════════════════
 
-    private static Button CreateButton(string text, int x, int y, Color color) =>
+    /// <summary>操作ボタングリッド用の大型ボタン（セルに Dock.Fill）。</summary>
+    private static Button CreateGridButton(string text, Color color) =>
         new()
         {
-            Text      = text, Left = x, Top = y, Width = 186, Height = 36,
+            Text      = text, Dock = DockStyle.Fill, Margin = new Padding(5),
             BackColor = color, ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
-            Font      = new Font("Meiryo UI", 9, FontStyle.Bold),
+            Font      = new Font("Meiryo UI", 10.5f, FontStyle.Bold),
             Cursor    = Cursors.Hand,
+            AutoEllipsis = true,
         };
 
-    private static Label CreateResultLabel(string text, int x, int y, int size, FontStyle style) =>
+    /// <summary>PLC ボタン行用ボタン（4列グリッドに Dock.Fill）。</summary>
+    private static Button CreatePlcButton(string text, Color color) =>
         new()
         {
-            Text = text, Left = x, Top = y, Width = 360, Height = 24,
-            Font = new Font("Meiryo UI", size, style), AutoEllipsis = true,
+            Text      = text, Dock = DockStyle.Fill, Margin = new Padding(3),
+            BackColor = color, ForeColor = Color.White,
+            FlatStyle = FlatStyle.Flat,
+            Font      = new Font("Meiryo UI", 9.5f, FontStyle.Bold),
+            Cursor    = Cursors.Hand,
+            AutoEllipsis = true,
         };
+
+    /// <summary>サマリーカード（上にタイトル・下に大きな値ラベル）を生成する。</summary>
+    private static Panel CreateStatCard(string title, Label value, Color valueColor, float valueFontSize = 19f)
+    {
+        value.Dock      = DockStyle.Fill;
+        value.Font      = new Font("Meiryo UI", valueFontSize, FontStyle.Bold);
+        value.ForeColor = valueColor;
+        value.TextAlign = ContentAlignment.MiddleCenter;
+        value.AutoEllipsis = true;
+
+        var card = new Panel
+        {
+            Dock = DockStyle.Fill, Margin = new Padding(5),
+            BackColor = Color.White, BorderStyle = BorderStyle.FixedSingle,
+        };
+        var t = new Label
+        {
+            Text = title, Dock = DockStyle.Top, Height = 26,
+            Font = new Font("Meiryo UI", 9.5f, FontStyle.Bold),
+            ForeColor = Color.FromArgb(90, 90, 110),
+            TextAlign = ContentAlignment.MiddleCenter,
+            BackColor = Color.FromArgb(236, 239, 247),
+        };
+        card.Controls.Add(value);
+        card.Controls.Add(t);
+        return card;
+    }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
