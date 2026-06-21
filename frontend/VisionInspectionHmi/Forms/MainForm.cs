@@ -1211,9 +1211,11 @@ public class MainForm : Form
             var prev = picImage.Image;
             if (chkHeatmap.Checked)
             {
+                // 異常検知閾値を基準に着色（閾値未満は透明）。閾値は設定値を使用。
+                double threshold = AppSettingsService.Current.AnomalyThreshold;
                 using var baseImg = LoadImageCopy(_lastInspectedImagePath);
                 picImage.Image = AnomalyHeatmapRenderer.Overlay(
-                    baseImg, r.AnomalyMap, r.AnomalyMapWidth, r.AnomalyMapHeight, 0.5f);
+                    baseImg, r.AnomalyMap, r.AnomalyMapWidth, r.AnomalyMapHeight, threshold);
             }
             else
             {

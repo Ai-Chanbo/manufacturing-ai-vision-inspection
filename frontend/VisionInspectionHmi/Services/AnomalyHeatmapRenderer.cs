@@ -5,33 +5,40 @@ using System.Drawing.Imaging;
 namespace VisionInspectionHmi.Services;
 
 /// <summary>
-/// 異常検知の anomaly_map（float 配列）をカラーヒートマップ化し、
-/// 元画像へ重畳（αブレンド）するレンダラ。
+/// 異常検知の anomaly_map（float 配列）を「異常検知閾値基準」でカラーヒートマップ化し、
+/// 元画像へ重畳するレンダラ。
 ///
-/// 配色は jet（低=青 → 高=赤）。値は画像ごとの min/max で正規化し、
-/// 異常領域（高スコア）のコントラストを最大化する。
+/// 旧実装の画像ごと min/max 正規化は、正常画像でも微小差分が強調されて全体が
+/// レインボー表示になる課題があったため廃止。代わりに次の方針で描画する:
+///   - 閾値未満の画素 … 透明（元画像をそのまま見せる）
+///   - 閾値以上の画素 … 異常度に応じて yellow → orange → red、α は 0.45〜0.60
+/// これにより正常画像はほぼ原画像のまま、欠陥画像は異常箇所だけが赤系で目立つ。
 /// </summary>
 public static class AnomalyHeatmapRenderer
 {
+    // 閾値からどれだけ上回ると最大強調（赤）になるかの幅。
+    // EfficientAD の正規化出力（pred_score / anomaly_map が概ね 0.5 近傍）に合わせた既定値。
+    private const float DefaultHighlightSpan = 0.008f;
+
+    // 閾値以上の画素の不透明度（0.45〜0.60）。
+    private const float MinAlpha = 0.45f; // 閾値ちょうど
+    private const float MaxAlpha = 0.60f; // 最大異常
+
     /// <summary>
-    /// anomaly_map をカラーヒートマップ Bitmap（width×height, 32bppArgb）に変換する。
+    /// anomaly_map を閾値基準のカラーヒートマップ Bitmap（width×height, 32bppArgb）に変換する。
+    /// 閾値未満の画素は完全透明（α=0）。
     /// </summary>
-    public static Bitmap Render(float[] map, int width, int height)
+    /// <param name="threshold">異常検知閾値（AppSettings.AnomalyThreshold）。これ以上を異常として着色。</param>
+    /// <param name="highlightSpan">閾値からの強調幅（threshold + span で赤に飽和）。</param>
+    public static Bitmap Render(float[] map, int width, int height, double threshold,
+                                float highlightSpan = DefaultHighlightSpan)
     {
         if (map.Length < width * height)
             throw new ArgumentException(
                 $"map 長 {map.Length} が {width}×{height} に不足しています。");
 
-        // 画像ごとの min/max で正規化
-        float min = float.PositiveInfinity, max = float.NegativeInfinity;
-        for (int i = 0; i < width * height; i++)
-        {
-            float v = map[i];
-            if (v < min) min = v;
-            if (v > max) max = v;
-        }
-        float range = max - min;
-        if (range <= 1e-12f) range = 1f; // ほぼ平坦なら 0 除算回避
+        float thr  = (float)threshold;
+        float span = highlightSpan <= 1e-6f ? 1e-6f : highlightSpan;
 
         var bmp = new Bitmap(width, height, PixelFormat.Format32bppArgb);
         var data = bmp.LockBits(new Rectangle(0, 0, width, height),
@@ -43,13 +50,27 @@ public static class AnomalyHeatmapRenderer
         {
             for (int x = 0; x < width; x++)
             {
-                float t = (map[y * width + x] - min) / range; // [0,1]
-                var (r, g, b) = Jet(t);
-                int idx = y * stride + x * 4;   // BGRA
+                float v   = map[y * width + x];
+                int   idx = y * stride + x * 4;   // BGRA
+
+                if (v < thr)
+                {
+                    // 閾値未満：透明（元画像をそのまま見せる）
+                    buf[idx + 0] = 0; buf[idx + 1] = 0; buf[idx + 2] = 0; buf[idx + 3] = 0;
+                    continue;
+                }
+
+                // 閾値以上：異常度 t に応じて yellow(0) → orange → red(1)
+                float t = Math.Clamp((v - thr) / span, 0f, 1f);
+                byte r = 255;
+                byte g = (byte)(255f * (1f - t)); // 黄(255,255,0) → 赤(255,0,0)
+                byte b = 0;
+                byte a = (byte)(255f * (MinAlpha + (MaxAlpha - MinAlpha) * t));
+
                 buf[idx + 0] = b;
                 buf[idx + 1] = g;
                 buf[idx + 2] = r;
-                buf[idx + 3] = 255;
+                buf[idx + 3] = a;
             }
         }
         System.Runtime.InteropServices.Marshal.Copy(buf, 0, data.Scan0, buf.Length);
@@ -58,12 +79,13 @@ public static class AnomalyHeatmapRenderer
     }
 
     /// <summary>
-    /// 元画像にヒートマップを α 合成した新しい Bitmap を返す（元画像サイズ）。
-    /// heatmap は元画像サイズへ拡大して重畳する。
+    /// 元画像にヒートマップを重畳した新しい Bitmap を返す（元画像サイズ）。
+    /// 閾値未満は透明なので、正常画像ではほぼ原画像のまま表示される。
     /// </summary>
-    public static Bitmap Overlay(Image baseImage, float[] map, int width, int height, float alpha = 0.5f)
+    public static Bitmap Overlay(Image baseImage, float[] map, int width, int height,
+                                 double threshold, float highlightSpan = DefaultHighlightSpan)
     {
-        using var heat = Render(map, width, height);
+        using var heat = Render(map, width, height, threshold, highlightSpan);
 
         var result = new Bitmap(baseImage.Width, baseImage.Height, PixelFormat.Format32bppArgb);
         using var g = Graphics.FromImage(result);
@@ -72,24 +94,11 @@ public static class AnomalyHeatmapRenderer
         // 背景に元画像
         g.DrawImage(baseImage, 0, 0, result.Width, result.Height);
 
-        // ヒートマップを alpha で重ねる
-        var cm = new ColorMatrix { Matrix33 = Math.Clamp(alpha, 0f, 1f) };
-        using var ia = new ImageAttributes();
-        ia.SetColorMatrix(cm, ColorMatrixFlag.Default, ColorAdjustType.Bitmap);
-
+        // ヒートマップを画素ごとの α で重ねる（透明部はそのまま元画像が見える）
+        g.CompositingMode = CompositingMode.SourceOver;
         var dest = new Rectangle(0, 0, result.Width, result.Height);
-        g.DrawImage(heat, dest, 0, 0, heat.Width, heat.Height, GraphicsUnit.Pixel, ia);
+        g.DrawImage(heat, dest, 0, 0, heat.Width, heat.Height, GraphicsUnit.Pixel);
 
         return result;
-    }
-
-    // jet カラーマップ: t∈[0,1] → RGB。低=青 / 中=緑 / 高=赤。
-    private static (byte r, byte g, byte b) Jet(float t)
-    {
-        t = Math.Clamp(t, 0f, 1f);
-        float r = Math.Clamp(1.5f - MathF.Abs(4f * t - 3f), 0f, 1f);
-        float g = Math.Clamp(1.5f - MathF.Abs(4f * t - 2f), 0f, 1f);
-        float b = Math.Clamp(1.5f - MathF.Abs(4f * t - 1f), 0f, 1f);
-        return ((byte)(r * 255f), (byte)(g * 255f), (byte)(b * 255f));
     }
 }
