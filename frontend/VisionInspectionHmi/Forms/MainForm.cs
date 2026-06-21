@@ -22,6 +22,7 @@ public class MainForm : Form
     private Button     btnInspect     = null!;
     private Button     btnCheckApi    = null!;
     private Button     btnExportCsv   = null!;
+    private Button     btnFolderInspect = null!;
     private Button     btnCameraStart = null!;
     private Button     btnCameraStop  = null!;
     private Button     btnSettings    = null!;
@@ -164,10 +165,16 @@ public class MainForm : Form
         lblApiStatus = new Label
         {
             Text      = "API: 未確認",
-            Left = 8, Top = 495, Width = 422, Height = 22,
+            Left = 8, Top = 495, Width = 200, Height = 22,
             Font      = new Font("Meiryo UI", 10, FontStyle.Bold),
             ForeColor = Color.Gray,
+            AutoEllipsis = true,
         };
+
+        // フォルダ検査（バッチ評価）ボタン — API ステータス行の右側に配置
+        btnFolderInspect = CreateButton("フォルダ検査", 214, 491, Color.Teal);
+        btnFolderInspect.Width  = 216;
+        btnFolderInspect.Height = 28;
 
         // ── 検査結果グループ ──────────────────────────────────────
         var resultGroup = new GroupBox
@@ -249,7 +256,7 @@ public class MainForm : Form
         leftPanel.Controls.AddRange([picImage, lblImagePath,
             btnSelectImage, btnInspect, btnCameraStart, btnCameraStop,
             btnCheckApi, btnExportCsv, btnSettings,
-            lblApiStatus, resultGroup, plcGroup]);
+            lblApiStatus, btnFolderInspect, resultGroup, plcGroup]);
 
         // ══════════════════════════════════════════════════════════
         //  右パネル（履歴・統計・モデル情報）
@@ -456,6 +463,7 @@ public class MainForm : Form
         btnCameraStop.Click   += BtnCameraStop_Click;
         btnCheckApi.Click     += BtnCheckApi_Click;
         btnExportCsv.Click    += BtnExportCsv_Click;
+        btnFolderInspect.Click += BtnFolderInspect_Click;
         btnSettings.Click     += BtnSettings_Click;
         btnPlcConnect.Click   += BtnPlcConnect_Click;
         btnPlcDisconnect.Click += BtnPlcDisconnect_Click;
@@ -511,6 +519,33 @@ public class MainForm : Form
             AppLogger.Error("画像の読み込みに失敗しました", ex);
             ShowError($"画像の表示に失敗しました: {ex.Message}");
         }
+    }
+
+    // フォルダ内の画像を連続検査し、MVTec AD 基準で定量評価する（バッチ評価）。
+    private void BtnFolderInspect_Click(object? sender, EventArgs e)
+    {
+        var cfg = AppSettingsService.Current;
+        if (cfg.InferenceMode != "ONNX" || _engine is null || !_engine.IsLoaded)
+        {
+            ShowError("フォルダ検査には ONNX モードのモデル読込が必要です。\n" +
+                      "設定画面で「ONNXモード」を選択し、モデルファイルを指定してください。");
+            return;
+        }
+
+        using var fbd = new FolderBrowserDialog
+        {
+            Description            = "検査するフォルダを選択してください（サブフォルダも再帰検索）",
+            UseDescriptionForTitle = true,
+        };
+        if (fbd.ShowDialog(this) != DialogResult.OK) return;
+
+        double threshold = ResolveThreshold(cfg);
+        string csvDir = string.IsNullOrWhiteSpace(cfg.CsvDirectory)
+            ? Path.Combine(AppContext.BaseDirectory, "Logs")
+            : Path.Combine(cfg.CsvDirectory, "Logs");
+
+        using var dlg = new BatchInspectionForm(_engine, threshold, fbd.SelectedPath, csvDir);
+        dlg.ShowDialog(this);
     }
 
     private async void BtnInspect_Click(object? sender, EventArgs e)
