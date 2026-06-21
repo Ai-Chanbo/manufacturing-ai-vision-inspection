@@ -544,7 +544,10 @@ public class MainForm : Form
             ? Path.Combine(AppContext.BaseDirectory, "Logs")
             : Path.Combine(cfg.CsvDirectory, "Logs");
 
-        using var dlg = new BatchInspectionForm(_engine, threshold, fbd.SelectedPath, csvDir);
+        using var dlg = new BatchInspectionForm(
+            _engine, threshold, fbd.SelectedPath, csvDir,
+            onMonitorImage:  MonitorShowImage,
+            onMonitorResult: MonitorShowResult);
         dlg.ShowDialog(this);
     }
 
@@ -1274,6 +1277,54 @@ public class MainForm : Form
         using var fs  = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         using var tmp = Image.FromStream(fs);
         return new Bitmap(tmp);
+    }
+
+    // ── フォルダ検査「モニターモード」用の表示更新（BatchInspectionForm から呼ばれる）──
+
+    /// <summary>モニターモード: 推論前に対象画像をプレビュー表示し、結果欄をクリアする。</summary>
+    internal void MonitorShowImage(string imagePath)
+    {
+        try
+        {
+            var img = LoadImageCopy(imagePath);
+            picImage.Image?.Dispose();
+            picImage.Image = img;
+        }
+        catch (Exception ex) { AppLogger.Error("モニター: 画像表示に失敗", ex); }
+
+        _selectedImagePath = imagePath;
+        lblImagePath.Text  = Path.GetFileName(imagePath);
+        ClearResult();
+    }
+
+    /// <summary>モニターモード: 推論結果を判定ラベル・ヒートマップ・履歴・統計へ反映する。</summary>
+    internal void MonitorShowResult(string imagePath, InspectionResult result)
+    {
+        ShowResult(result, result.InferenceMs);
+
+        _lastAnomalyResult      = result;
+        _lastInspectedImagePath = imagePath;
+        UpdateHeatmapDisplay();
+
+        var history = new InspectionHistory
+        {
+            InspectedAt   = DateTime.Now,
+            ImageFileName = Path.GetFileName(imagePath),
+            ImagePath     = imagePath,
+            Result        = result.Result,
+            Score         = result.Score,
+            DefectType    = !string.IsNullOrEmpty(result.ClassName)
+                            ? result.ClassName : result.DefectType,
+            Message       = result.Message,
+            ApiStatus     = "Batch",
+            InferenceMs   = result.InferenceMs,
+        };
+        AddHistory(history);
+
+        _totalCount++;
+        if      (result.Result == "OK") _okCount++;
+        else if (result.Result == "NG") _ngCount++;
+        UpdateStats();
     }
 
     private void ClearResult()
