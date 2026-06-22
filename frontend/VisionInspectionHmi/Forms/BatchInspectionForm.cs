@@ -28,7 +28,7 @@ public sealed class BatchInspectionForm : Form
     private NumericUpDown _nudDelay   = null!;
     private Button        _btnStart   = null!;
     private ProgressBar   _progress   = null!;
-    private Label         _lblFolder  = null!;
+    private TextBox       _lblFolder  = null!;   // フォルダパス表示（ReadOnly・最大2行）
     private Label         _lblCount   = null!;
     private TextBox       _txtResults = null!;
     private Button        _btnAction  = null!;
@@ -55,106 +55,140 @@ public sealed class BatchInspectionForm : Form
 
     private void InitializeComponent()
     {
-        // DPI(125%等)でも崩れないよう None で統一（ウィンドウ全体を一律に扱う）。
+        // DPI(100/125/150%)でも崩れないよう None で統一し、TableLayoutPanel で
+        // 行・列を管理する。重なり・はみ出し・文字切れを構造的に防止する。
         AutoScaleMode   = AutoScaleMode.None;
         Text            = "フォルダ検査（MVTec AD 評価）";
-        Size            = new Size(620, 580);
-        MinimumSize     = new Size(620, 580);
+        Size            = new Size(1000, 750);
+        MinimumSize     = new Size(900, 700);
         StartPosition   = FormStartPosition.CenterParent;
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        MaximizeBox     = false;
+        FormBorderStyle = FormBorderStyle.Sizable;
+        MaximizeBox     = true;
         MinimizeBox     = false;
         BackColor       = Color.FromArgb(245, 245, 250);
+        Padding         = new Padding(18, 14, 18, 14);   // 外周余白（右端も 18px 確保）
 
+        var baseFont = new Font("Meiryo UI", 9);
+
+        // ── ルート（縦方向の行管理）────────────────────────────────
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6,
+        };
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));        // 0 ヘッダー
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));    // 1 フォルダパス（最大2行）
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));    // 2 モニター行
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));    // 3 進捗行
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));    // 4 ログ（残り領域）
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));    // 5 閉じる行
+
+        // 0) ヘッダー
         var header = new Label
         {
             Text = $"対象フォルダを再帰検索して連続検査します（閾値 {_threshold:F2}）",
-            Left = 12, Top = 10, Width = 584, Height = 20,
-            Font = new Font("Meiryo UI", 9, FontStyle.Bold),
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            Dock = DockStyle.Fill, AutoSize = true,
+            Font = new Font("Meiryo UI", 10, FontStyle.Bold),
+            Margin = new Padding(2, 2, 2, 4),
         };
 
-        _lblFolder = new Label
+        // 1) フォルダパス（ReadOnly TextBox・最大2行）
+        _lblFolder = new TextBox
         {
-            Text = _folder,
-            Left = 12, Top = 34, Width = 584, Height = 20,
-            Font = new Font("Meiryo UI", 8), ForeColor = Color.DimGray,
-            AutoEllipsis = true,
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            Text = _folder, Dock = DockStyle.Fill,
+            ReadOnly = true, Multiline = true, WordWrap = true,
+            ScrollBars = ScrollBars.Vertical,
+            BorderStyle = BorderStyle.FixedSingle,
+            BackColor = Color.FromArgb(248, 248, 250), ForeColor = Color.DimGray,
+            Font = baseFont, Margin = new Padding(2, 0, 2, 6),
         };
 
-        // ── モニターモード行（チェックボックスは単独行：横方向の重なりを防止）──
+        // 2) モニター行（[モニターモード] [遅延(ms)] [NumericUpDown] [開始] を横並び管理）
+        var monitorRow = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1, Margin = new Padding(2, 0, 2, 0),
+        };
+        monitorRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); // チェック（左・残り占有）
+        monitorRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));     // 遅延ラベル
+        monitorRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84)); // NumericUpDown
+        monitorRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 172));// 開始ボタン
         _chkMonitor = new CheckBox
         {
             Text = "モニターモード（デモ表示：1枚ずつ画面更新）",
-            Left = 12, Top = 60, AutoSize = true,
-            Font = new Font("Meiryo UI", 9),
-            Checked = false,
-            Anchor = AnchorStyles.Top | AnchorStyles.Left,
+            AutoSize = true, Font = baseFont, Checked = false,
+            Anchor = AnchorStyles.Left, Margin = new Padding(0),
         };
-
-        // ── 遅延・開始行 ───────────────────────────────────────
         var lblDelay = new Label
         {
-            Text = "遅延(ms):",
-            Left = 12, Top = 92, Width = 64, Height = 20,
-            Font = new Font("Meiryo UI", 9),
-            Anchor = AnchorStyles.Top | AnchorStyles.Left,
+            Text = "遅延(ms):", AutoSize = true, Font = baseFont,
+            Anchor = AnchorStyles.Right, TextAlign = ContentAlignment.MiddleRight,
+            Margin = new Padding(8, 0, 6, 0),
         };
         _nudDelay = new NumericUpDown
         {
-            Left = 80, Top = 90, Width = 72, Height = 22,
-            Font = new Font("Meiryo UI", 9),
+            Width = 74, Font = baseFont, Anchor = AnchorStyles.Left,
             Minimum = 0, Maximum = 5000, Increment = 100, Value = 500,
-            Anchor = AnchorStyles.Top | AnchorStyles.Left,
+            Margin = new Padding(0, 0, 0, 0),
         };
         _btnStart = new Button
         {
-            Left = 164, Top = 88, Width = 120, Height = 28,
-            Text = "▶ 開始",
-            Font = new Font("Meiryo UI", 9, FontStyle.Bold),
+            Dock = DockStyle.Fill, Text = "▶ 開始",
+            Font = new Font("Meiryo UI", 10, FontStyle.Bold),
             BackColor = Color.SeaGreen, ForeColor = Color.White,
-            FlatStyle = FlatStyle.Flat,
-            Anchor = AnchorStyles.Top | AnchorStyles.Left,
+            FlatStyle = FlatStyle.Flat, Margin = new Padding(8, 6, 0, 6),
         };
         _btnStart.Click += async (_, _) => await StartAsync();
+        monitorRow.Controls.Add(_chkMonitor, 0, 0);
+        monitorRow.Controls.Add(lblDelay,    1, 0);
+        monitorRow.Controls.Add(_nudDelay,   2, 0);
+        monitorRow.Controls.Add(_btnStart,   3, 0);
 
-        // ── 進捗・件数行 ───────────────────────────────────────
+        // 3) 進捗行（ProgressBar 横幅いっぱい ＋ 件数ラベル右寄せ）
+        var progressRow = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(2, 4, 2, 4),
+        };
+        progressRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        progressRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96)); // 「9999 / 9999」でも収まる幅
         _progress = new ProgressBar
         {
-            Left = 12, Top = 126, Width = 494, Height = 22,
-            Style = ProgressBarStyle.Continuous,
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            Dock = DockStyle.Fill, Style = ProgressBarStyle.Continuous,
+            Margin = new Padding(0, 2, 8, 2),
         };
         _lblCount = new Label
         {
-            Text = "0 / 0",
-            Left = 514, Top = 126, Width = 82, Height = 22,
-            Font = new Font("Meiryo UI", 9, FontStyle.Bold),
-            TextAlign = ContentAlignment.MiddleRight,
-            Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            Text = "0 / 0", Dock = DockStyle.Fill, Font = new Font("Meiryo UI", 9, FontStyle.Bold),
+            TextAlign = ContentAlignment.MiddleRight, Margin = new Padding(0),
         };
+        progressRow.Controls.Add(_progress, 0, 0);
+        progressRow.Controls.Add(_lblCount, 1, 0);
 
-        // ── 結果表示（長い CSV パスは WordWrap で折り返し＋縦スクロール）──
+        // 4) 結果ログ（残り領域を占有・WordWrap＋縦スクロール）
         _txtResults = new TextBox
         {
-            Left = 12, Top = 156, Width = 584, Height = 324,
+            Dock = DockStyle.Fill,
             Multiline = true, ReadOnly = true, WordWrap = true,
             ScrollBars = ScrollBars.Vertical,
-            BackColor = Color.White,
+            BackColor = Color.White, BorderStyle = BorderStyle.FixedSingle,
             Font = new Font("Consolas", 10),
             Text = "「▶ 開始」で検査を開始します。",
-            Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+            Margin = new Padding(2, 2, 2, 6),
         };
 
+        // 5) 閉じる行（右下に右寄せ）
+        var bottomRow = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(2, 4, 2, 2),
+        };
+        bottomRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        bottomRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
         _btnAction = new Button
         {
-            Left = 500, Top = 490, Width = 96, Height = 32,
-            Text = "閉じる",
-            Font = new Font("Meiryo UI", 9, FontStyle.Bold),
+            Text = "閉じる", Width = 112, Height = 38,
+            Font = new Font("Meiryo UI", 10, FontStyle.Bold),
             BackColor = Color.DimGray, ForeColor = Color.White,
             FlatStyle = FlatStyle.Flat,
-            Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+            Anchor = AnchorStyles.Right, Margin = new Padding(0, 4, 0, 4),
         };
         _btnAction.Click += (_, _) =>
         {
@@ -163,9 +197,18 @@ public sealed class BatchInspectionForm : Form
             _btnAction.Enabled = false;
             _btnAction.Text = "中止中...";
         };
+        bottomRow.Controls.Add(new Label { Dock = DockStyle.Fill }, 0, 0); // スペーサ
+        bottomRow.Controls.Add(_btnAction, 1, 0);
 
-        Controls.AddRange([header, _lblFolder, _chkMonitor, lblDelay, _nudDelay, _btnStart,
-                            _progress, _lblCount, _txtResults, _btnAction]);
+        // 行を組み立て
+        root.Controls.Add(header,      0, 0);
+        root.Controls.Add(_lblFolder,  0, 1);
+        root.Controls.Add(monitorRow,  0, 2);
+        root.Controls.Add(progressRow, 0, 3);
+        root.Controls.Add(_txtResults, 0, 4);
+        root.Controls.Add(bottomRow,   0, 5);
+
+        Controls.Add(root);
     }
 
     // モニター表示中に MainForm のプレビューが隠れないよう、オーナー右端に寄せる。
